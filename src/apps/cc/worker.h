@@ -1,18 +1,8 @@
 #ifndef SCDETECT_APPS_CC_WORKER_H_
 #define SCDETECT_APPS_CC_WORKER_H_
 
-#include "exception.h"
-
 namespace Seiscomp {
 namespace detect {
-namespace worker {
-
-class BaseException : public Exception {
-  using Exception::Exception;
-  BaseException();
-};
-
-}  // namespace worker
 
 class Worker {
  public:
