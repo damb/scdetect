@@ -3,14 +3,19 @@
 
 #include <string>
 
+#include "../filter/crosscorrelation.h"
+
 namespace Seiscomp {
 namespace detect {
 namespace detector {
 namespace detail {
 
 using ProcessorIdType = std::string;
+using WaveformStreamIdType = std::string;
 
-}
+using CrossCorrelation = filter::CrossCorrelation<double>;
+
+}  // namespace detail
 }  // namespace detector
 }  // namespace detect
 }  // namespace Seiscomp
