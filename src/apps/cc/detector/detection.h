@@ -9,6 +9,7 @@
 #include "../config/detector.h"
 #include "arrival.h"
 #include "detail.h"
+#include "event_parameters.h"
 #include "inventory.h"
 
 namespace Seiscomp {
@@ -34,16 +35,11 @@ struct Detection {
 
   config::PublishConfig publishConfig;
 
-  // The detection origin time
-  Core::Time originTime;
+  Origin origin;
 
   // The detection score. In case of a single stream detector setup this
   // corresponds to the cross-correlation coefficient.
   double score{};
-
-  double latitude{};
-  double longitude{};
-  boost::optional<double> depth;
 
   int numStationsAssociated{};
   int numStationsUsed{};
