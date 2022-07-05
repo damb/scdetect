@@ -8,12 +8,10 @@
 #include <memory>
 #include <vector>
 
-#include "../config/detector.h"
 #include "detail.h"
 #include "detection.h"
 #include "detection_candidate.h"
-#include "event_parameters.h"
-#include "inventory.h"
+#include "detection_processor.h"
 
 namespace Seiscomp {
 namespace detect {
@@ -28,35 +26,6 @@ class Detector;
 // - Implements trigger facilities
 class DetectionCandidateProcessor {
  public:
-  // Emerges detections based on a candidate and performs a so-called alignment
-  // correction.
-  struct DetectionProcessor {
-    struct TemplateProcessorInfo {
-      // The sensor location the template processor is referring to
-      SensorLocation sensorLocation;
-      // The template waveform reference time (i.e. the reference time template
-      // waveform was generated based on)
-      Core::Time templateWaveformReferenceTime;
-    };
-
-    using TemplateProcessorInfos =
-        std::unordered_map<detail::ProcessorIdType, TemplateProcessorInfo>;
-    TemplateProcessorInfos templateProcessorInfos;
-
-    // The detector related publish configuration
-    config::PublishConfig publishConfig;
-
-    // The template origin
-    Origin templateOrigin;
-
-    // The detection time correction
-    Core::TimeSpan timeCorrection;
-
-    // Creates a `Detection` from `candidate`
-    std::unique_ptr<Detection> operator()(
-        const Detector* detector, const DetectionCandidate& candidate) const;
-  };
-
   explicit DetectionCandidateProcessor(DetectionProcessor&& detectionProcessor,
                                        const Detector* detector);
 
