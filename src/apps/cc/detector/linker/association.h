@@ -8,7 +8,7 @@
 
 #include "../arrival.h"
 #include "../detail.h"
-#include "../template_waveform_processor.h"
+#include "../match_result.h"
 
 namespace Seiscomp {
 namespace detect {
@@ -19,10 +19,9 @@ struct Association {
   struct TemplateResult {
     Arrival arrival;
     // Reference to the actual match result value
-    TemplateWaveformProcessor::MatchResult::LocalMaxima::const_iterator
-        resultIt;
+    MatchResult::LocalMaxima::const_iterator resultIt;
     // Reference to the original template result
-    std::shared_ptr<const TemplateWaveformProcessor::MatchResult> matchResult;
+    std::shared_ptr<const MatchResult> matchResult;
 
     friend bool operator==(const TemplateResult &lhs,
                            const TemplateResult &rhs);
