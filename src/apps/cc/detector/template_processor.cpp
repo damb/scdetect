@@ -50,9 +50,10 @@ TemplateProcessor::EventHandler::EventHandler(TemplateProcessor* processor)
     : processor{processor} {}
 
 void TemplateProcessor::EventHandler::operator()(event::Record& ev) {
-  // TODO TODO TODO
-  // - buffer record
-  // - create a new state machine (if buffer full)
+  // TODO(damb): implement record buffer
+
+  // create new state machine
+  processor->_stateMachines.emplace(ev.record.get(), processor);
 }
 
 void TemplateProcessor::EventHandler::operator()(InternalEvent& ev) {
