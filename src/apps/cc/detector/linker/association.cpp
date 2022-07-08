@@ -18,7 +18,9 @@ bool operator!=(const Association::TemplateResult &lhs,
   return !(lhs == rhs);
 }
 
-size_t Association::processorCount() const { return results.size(); }
+std::size_t Association::processorCount() const noexcept {
+  return results.size();
+}
 
 std::string Association::debugString() const {
   return std::string{

@@ -38,7 +38,7 @@ struct Association {
   double score;
 
   // Returns the total number of associated processors
-  std::size_t processorCount() const;
+  std::size_t processorCount() const noexcept;
   // Returns a string including debug information
   std::string debugString() const;
 
