@@ -17,44 +17,46 @@
 
 #include "../builder.h"
 #include "../config/detector.h"
-#include "../processing/waveform_processor.h"
+#include "../processing/processor.h"
 #include "../waveform.h"
-#include "detector_impl.h"
-#include "seiscomp/core/typedarray.h"
-#include "template_waveform_processor.h"
+#include "arrival.h"
+#include "detection.h"
+#include "detection_candidate.h"
+#include "detection_candidate_processor.h"
+#include "detection_processor.h"
+#include "event/link.h"
+#include "event/record.h"
+#include "inventory.h"
+#include "linker.h"
+#include "linker/association.h"
+#include "template_processor.h"
 
 namespace Seiscomp {
 namespace detect {
 namespace detector {
 
-// Detector waveform processor implementation
-class Detector : public processing::WaveformProcessor {
-  explicit Detector(const DataModel::OriginCPtr &origin);
+// Event-driven detector implementation. It does neither implement an event
+// loop nor an event queue. Instead, it relies on e.g. `worker::DetectorWorker`
+// which implements these facilities.
+class Detector : public processing::Processor {
+  using TemplateProcessors = std::vector<TemplateProcessor>;
 
  public:
-  struct Detection {
-    double score{};
+  using const_iterator = TemplateProcessors::const_iterator;
+  using size_type = std::size_t;
+  using Event = boost::variant2::variant<event::Link, TemplateProcessor::Event>;
+  using Detection = detector::Detection;
+  using EmitDetectionCallback =
+      std::function<void(const Detector *, std::unique_ptr<Detection>)>;
+  using EmitEventCallback = std::function<void(Event &&)>;
 
-    Core::Time time;
-    double latitude{};
-    double longitude{};
-    double depth{};
-
-    size_t numStationsAssociated{};
-    size_t numStationsUsed{};
-    size_t numChannelsAssociated{};
-    size_t numChannelsUsed{};
-
-    config::PublishConfig publishConfig;
-
-    using TemplateResult = DetectorImpl::Result::TemplateResult;
-    using TemplateResults = DetectorImpl::Result::TemplateResults;
-    // Template specific results
-    TemplateResults templateResults;
+  enum class Status {
+    kWaitingForData = 0,
+    // Associated value is the last status
+    kTerminated,
+    // No associated value yet (error code?)
+    kError,
   };
-
-  using PublishDetectionCallback = std::function<void(
-      const Detector *, const Record *, std::unique_ptr<const Detection>)>;
 
   class Builder : public detect::Builder<Detector> {
    public:
@@ -76,14 +78,9 @@ class Detector : public processing::WaveformProcessor {
     void finalize() override;
 
    private:
-    void setMergingStrategy(const std::string &strategyId);
-
-    static bool isValidArrival(const DataModel::Arrival &arrival,
-                               const DataModel::Pick &pick);
-
     struct TemplateProcessorConfig {
-      // Template matching processor
-      std::unique_ptr<TemplateWaveformProcessor> processor;
+      // Template processor
+      TemplateProcessor processor;
       // `TemplateWaveformProcessor` specific merging threshold
       boost::optional<double> mergingThreshold;
 
@@ -97,90 +94,158 @@ class Detector : public processing::WaveformProcessor {
       } metadata;
     };
 
-    std::string _originId;
-
     using TemplateProcessorConfigs =
         std::unordered_map<std::string, TemplateProcessorConfig>;
+
+    static bool isValidArrival(const DataModel::Arrival &arrival,
+                               const DataModel::Pick &pick);
+
+    void setTemplateOrigin();
+
+    void setMergingStrategy(const std::string &strategyId);
+
     TemplateProcessorConfigs _processorConfigs;
+
+    DetectionProcessor _detectionProcessor;
+
+    DataModel::OriginCPtr _origin;
   };
 
   friend class Builder;
   static Builder Create(const std::string &originId);
 
-  void setGapInterpolation(bool gapInterpolation) override;
-  void setGapThreshold(const Core::TimeSpan &duration) override;
-  void setGapTolerance(const Core::TimeSpan &duration) override;
+  const_iterator begin() const noexcept;
+  const_iterator end() const noexcept;
+  const_iterator cbegin() const noexcept;
+  const_iterator cend() const noexcept;
 
-  // Sets the `callback` in order to publish detections
-  void setResultCallback(const PublishDetectionCallback &callback);
+  // Returns the number of underlying `TemplateProcessor`s
+  std::size_t size() const noexcept;
 
-  void reset() override;
-  void terminate() override;
+  // Enables (`true`) or disables (`false`) the detector
+  void enable(bool enable);
+  bool enabled() const;
 
-  const config::PublishConfig &publishConfig() const;
+  // Returns the detector's status
+  Status status() const;
+  // Terminates the detector ignoring its current status
+  void terminate();
 
-  // Returns the underlying template waveform processor identified by
-  // `processorId`
-  //
-  // - returns a `nullptr` if no processor is identified by `processorId`
-  const TemplateWaveformProcessor *processor(
-      const std::string &processorId) const;
+  // Dispatches `ev`
+  void dispatch(Event &&ev);
 
-  using const_iterator = DetectorImpl::const_iterator;
-  const_iterator begin() const { return _detectorImpl.begin(); }
-  const_iterator end() const { return _detectorImpl.end(); }
-  const_iterator cbegin() const { return _detectorImpl.cbegin(); }
-  const_iterator cend() const { return _detectorImpl.cend(); }
+  // Posts `ev` by means of calling the callback previously configured by means
+  // of `setEmitEventCallback()`.
+  void postEvent(Event &&ev) const;
 
- protected:
-  WaveformProcessor::StreamState *streamState(const Record *record) override;
+  // Resets the detector
+  void reset();
+  // Flushes pending detections
+  void flush();
 
-  void process(StreamState &streamState, const Record *record,
-               const DoubleArray &filteredData) override;
+  // Returns a reference to the underlying `TemplateProcessor` or `nullptr` if
+  // there is no underlying `TemplateProcessor` identified by `processorId`.
+  const TemplateProcessor *processor(const std::string &processorId) const;
 
-  bool store(const Record *record) override;
+  // Returns a reference to the detector configuration
+  const config::DetectorConfig &detectorConfig() const;
 
-  void reset(StreamState &streamState) override;
+  void setEmitDetectionCallback(EmitDetectionCallback callback);
 
-  bool fill(processing::StreamState &streamState, const Record *record,
-            DoubleArrayPtr &data) override;
+  void setEmitEventCallback(EmitEventCallback callback);
 
-  bool handleGap(processing::StreamState &streamState, const Record *record,
-                 DoubleArrayPtr &data) override;
+  // Returns the waveform stream identifiers the detector is associated with
+  std::set<std::string> associatedWaveformStreamIds() const;
 
-  // Callback function storing `res`
-  void storeDetection(const DetectorImpl::Result &res);
-  // Creates a detection from `res`
-  std::unique_ptr<const Detection> createDetection(
-      const DetectorImpl::Result &res);
+  // Returns a reference to the underlying linker
+  const Linker &linker() const;
 
-  void emitDetection(const Record *record,
-                     std::unique_ptr<const Detection> detection);
-
-  const DetectorImpl &detectorImpl() const;
+  // Sets the maximum data latency to be allowed
+  void setMaxLatency(boost::optional<Core::TimeSpan> latency = boost::none);
+  // Returns the configured maximum allowed data latency or `boost::none` if
+  // the data latency is not evaluated
+  const boost::optional<Core::TimeSpan> &maxLatency() const;
 
  private:
-  void processDetections(const Record *record);
+  struct EventHandler {
+    using InternalEvent = TemplateProcessor::Event;
+    explicit EventHandler(Detector *detector);
 
-  using WaveformStreamID = std::string;
-  using StreamStates =
-      std::unordered_map<WaveformStreamID,
-                         processing::WaveformProcessor::StreamState>;
-  StreamStates _streamStates;
+    void operator()(event::Link &ev);
+    void operator()(InternalEvent &ev);
+
+    Detector *detector{nullptr};
+  };
+
+  friend EventHandler;
+
+  struct InternalEventHandler {
+    InternalEventHandler(Detector *detector);
+    void operator()(const event::Record &ev);
+
+    template <typename TInternalEvent>
+    void operator()(TInternalEvent &&ev) {
+      // XXX(damb): no bounds checking
+      detector
+          ->_templateProcessors
+              [detector->_templateProcessorIdIdx[ev.templateProcessorId]]
+          .dispatch(std::move(ev));
+    }
+
+    Detector *detector{nullptr};
+  };
+
+  friend InternalEventHandler;
+
+  Detector();
+
+  // Registers the `templateProcessor`. Records fed to the detector are
+  // associated with the underlying `templateProcessor` by the waveform stream
+  // identifier `waveformStreamId`.
+  // Besides, `templateProcessor` is associated together with the template
+  // arrival `arrival` and `sensorLocation`.
+  void registerTemplateProcessor(
+      TemplateProcessor &&templateProcessor,
+      /* const boost::optional<Core::TimeSpan> &templateProcessorBufferSize, */
+      const std::string &waveformStreamId, const Arrival &arrival,
+      const SensorLocation &sensorLocation,
+      const boost::optional<double> &mergingThreshold);
+
+  // Returns whether `record` has an acceptable latency
+  bool hasAcceptableLatency(const Record *record) const;
+
+  void onTriggeredCallback(
+      const DetectionCandidateProcessor *detectionCandidateProcessor,
+      const DetectionCandidate &candidate);
+
+  void onLinkerResultCallback(linker::Association &&association);
+
+  void resetTemplateProcessorLinkingInfo();
+
+  TemplateProcessors _templateProcessors;
+  using TemplateProcessorWaveformStreamIdIdx =
+      std::unordered_map<detail::WaveformStreamIdType, std::size_t>;
+  TemplateProcessorWaveformStreamIdIdx _templateProcessorWaveformStreamIdIdx;
+  using TemplateProcessorIdIdx =
+      std::unordered_map<detail::ProcessorIdType, std::size_t>;
+  TemplateProcessorIdIdx _templateProcessorIdIdx;
+
+  std::vector<bool> _templateProcessorLinkingInfo;
+
+  // The linker used for pick association
+  Linker _linker;
+
+  DetectionCandidateProcessor _detectionCandidateProcessor;
 
   config::DetectorConfig _config;
 
-  DetectorImpl _detectorImpl;
+  EmitEventCallback _emitEventCallback;
 
-  PublishDetectionCallback _detectionCallback;
+  // The maximum acceptable data latency
+  boost::optional<Core::TimeSpan> _maxLatency;
 
-  using DetectionQueue = std::list<DetectorImpl::Result>;
-  DetectionQueue _detectionQueue;
-
-  // Reference to the *template* origin
-  DataModel::OriginCPtr _origin;
-
-  config::PublishConfig _publishConfig;
+  Status _status{Status::kWaitingForData};
+  bool _enabled{true};
 };
 
 }  // namespace detector

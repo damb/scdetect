@@ -207,9 +207,6 @@ class WaveformProcessor : public Processor, public detail::InterpolateGaps {
   double _statusValue{0};
 };
 
-std::unique_ptr<WaveformProcessor::Filter> createFilter(
-    const std::string &filter);
-
 }  // namespace processing
 }  // namespace detect
 }  // namespace Seiscomp

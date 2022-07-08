@@ -3,8 +3,8 @@
 
 #include <string>
 
-#include "../exception.h"
 #include "../log.h"
+#include "exception.h"
 
 namespace Seiscomp {
 namespace detect {
@@ -29,9 +29,9 @@ class Processor {
   virtual ~Processor() = default;
 
   // Base class for all processor related exceptions
-  class BaseException : public Exception {
+  class BaseException : public processing::BaseException {
    public:
-    using Exception::Exception;
+    using processing::BaseException::BaseException;
     BaseException();
   };
 

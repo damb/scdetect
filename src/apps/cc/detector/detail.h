@@ -1,6 +1,7 @@
 #ifndef SCDETECT_APPS_CC_DETECTOR_DETAIL_H_
 #define SCDETECT_APPS_CC_DETECTOR_DETAIL_H_
 
+#include <memory>
 #include <string>
 
 #include "../filter/crosscorrelation.h"

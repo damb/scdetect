@@ -5,7 +5,7 @@ namespace detect {
 namespace processing {
 
 Processor::BaseException::BaseException()
-    : Exception{"base processor exception"} {}
+    : processing::BaseException{"base processor exception"} {}
 
 void Processor::setId(const std::string &id) { _id = id; }
 

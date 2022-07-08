@@ -11,7 +11,6 @@
 #include "detail.h"
 #include "detection.h"
 #include "detection_candidate.h"
-#include "detection_processor.h"
 
 namespace Seiscomp {
 namespace detect {
@@ -26,8 +25,15 @@ class Detector;
 // - Implements trigger facilities
 class DetectionCandidateProcessor {
  public:
-  explicit DetectionCandidateProcessor(DetectionProcessor&& detectionProcessor,
-                                       const Detector* detector);
+  using OnTriggeredCallback =
+      std::function<void(const DetectionCandidateProcessor*,
+                         const DetectionCandidate& triggerCandidate)>;
+  using ProcessDetectionCallback = std::function<std::unique_ptr<Detection>(
+      const Detector*, const DetectionCandidate&)>;
+  using EmitDetectionCallback =
+      std::function<void(std::unique_ptr<Detection> detection)>;
+
+  explicit DetectionCandidateProcessor(const Detector* detector);
 
   // Enables trigger facilities
   void enableTrigger(const boost::optional<Core::TimeSpan>& duration);
@@ -47,16 +53,10 @@ class DetectionCandidateProcessor {
   // Resets the processor
   void reset();
 
-  // Allows access to the underlying `DetectionProcessor`
-  const DetectionProcessor& detectionProcessor();
-
-  using OnTriggeredCallback =
-      std::function<void(const DetectionCandidateProcessor*,
-                         const DetectionCandidate& triggerCandidate)>;
   void setOnTriggeredCallback(OnTriggeredCallback callback);
 
-  using EmitDetectionCallback =
-      std::function<void(std::unique_ptr<Detection> detection)>;
+  void setProcessDetectionCallback(ProcessDetectionCallback callback);
+
   void setEmitDetectionCallback(EmitDetectionCallback callback);
 
  private:
@@ -69,9 +69,8 @@ class DetectionCandidateProcessor {
   // Emits the detection
   void emitDetection(std::unique_ptr<Detection> detection);
 
-  DetectionProcessor _detectionProcessor;
-
   OnTriggeredCallback _onTriggeredCallback;
+  ProcessDetectionCallback _processDetectionCallback;
   EmitDetectionCallback _emitDetectionCallback;
 
   // The current detection candidate

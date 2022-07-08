@@ -4,6 +4,7 @@
 
 #include "../util/memory.h"
 #include "detection_candidate.h"
+#include "detector.h"
 
 namespace Seiscomp {
 namespace detect {

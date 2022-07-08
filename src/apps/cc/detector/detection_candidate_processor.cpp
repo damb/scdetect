@@ -1,5 +1,6 @@
 #include "detection_candidate_processor.h"
 
+#include <cassert>
 #include <unordered_set>
 #include <vector>
 
@@ -13,8 +14,8 @@ namespace detect {
 namespace detector {
 
 DetectionCandidateProcessor::DetectionCandidateProcessor(
-    DetectionProcessor &&detectionProcessor, const Detector *detector)
-    : _detectionProcessor{std::move(detectionProcessor)}, _detector{detector} {}
+    const Detector *detector)
+    : _detector{detector} {}
 
 void DetectionCandidateProcessor::enableTrigger(
     const boost::optional<Core::TimeSpan> &duration) {
@@ -39,8 +40,11 @@ void DetectionCandidateProcessor::feed(DetectionCandidate &&candidate) {
 }
 
 void DetectionCandidateProcessor::flush() {
+  assert(_processDetectionCallback);
+
   if (_currentDetectionCandidate) {
-    emitDetection(_detectionProcessor(_detector, *_currentDetectionCandidate));
+    emitDetection(
+        _processDetectionCallback(_detector, *_currentDetectionCandidate));
   }
   reset();
 }
@@ -48,10 +52,6 @@ void DetectionCandidateProcessor::flush() {
 void DetectionCandidateProcessor::reset() {
   _currentDetectionCandidate = boost::none;
   resetTrigger();
-}
-
-const DetectionProcessor &DetectionCandidateProcessor::detectionProcessor() {
-  return _detectionProcessor;
 }
 
 void DetectionCandidateProcessor::setOnTriggeredCallback(
@@ -133,7 +133,9 @@ void DetectionCandidateProcessor::processCandidate(
 
   // emit detection
   if (!triggered()) {
-    emitDetection(_detectionProcessor(_detector, *_currentDetectionCandidate));
+    assert(_processDetectionCallback);
+    emitDetection(
+        _processDetectionCallback(_detector, *_currentDetectionCandidate));
   }
 
   // re-trigger

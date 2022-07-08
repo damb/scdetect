@@ -15,7 +15,6 @@
 #include "../template_waveform.h"
 #include "detail.h"
 #include "event/record.h"
-#include "status.h"
 #include "template_processor/state_machine.h"
 
 namespace Seiscomp {
@@ -39,7 +38,16 @@ class TemplateProcessor : public processing::Processor {
  public:
   using Filter = DoubleFilter;
   using Event = boost::variant2::variant<event::Record, InternalEvent>;
-  using Status = detector::Status;
+
+  enum class Status {
+    kWaitingForData = 0,
+    kTerminated,
+    // No associated value yet (error code?)
+    kError,
+    // Indicates saturated/clipped data
+    kDataClipped,
+  };
+
   // Describes the current state of a stream
   struct StreamState : public processing::StreamState {
     // The filter (if used)
@@ -53,14 +61,14 @@ class TemplateProcessor : public processing::Processor {
     bool initialized{false};
   };
 
-  TemplateProcessor(TemplateWaveform templateWaveform,
-                    Detector* parent = nullptr);
+  explicit TemplateProcessor(TemplateWaveform templateWaveform,
+                             Detector* parent = nullptr);
 
   // Returns the processor's current stream state
   const StreamState& streamState() const;
 
-  // Set the processor's status
-  void setStatus(Status status);
+  // Returns whether the processor has finished
+  bool finished() const;
 
   // Resets the `TemplateProcessor`
   void reset();
@@ -70,6 +78,8 @@ class TemplateProcessor : public processing::Processor {
   // Sets `filter` with the corresponding filter `initTime`
   void setFilter(std::unique_ptr<DoubleFilter> filter,
                  const boost::optional<Core::TimeSpan>& initTime = boost::none);
+  // Returns the processor's initialization time
+  boost::optional<Core::TimeSpan> initTime() const;
 
   // Returns a pointer to the parent detector or `nullptr` in case the
   // processor is not assigned to a detector.
@@ -83,7 +93,7 @@ class TemplateProcessor : public processing::Processor {
  private:
   struct EventHandler {
     explicit EventHandler(TemplateProcessor* processor);
-    void operator()(event::Record& ev);
+    void operator()(const event::Record& ev);
     void operator()(InternalEvent& ev);
 
     TemplateProcessor* processor{nullptr};
@@ -123,7 +133,12 @@ class TemplateProcessor : public processing::Processor {
     TemplateProcessor* processor{nullptr};
   };
 
+  friend HandleFinished;
+
   static void reset(StreamState& streamState);
+
+  // Set the processor's status
+  void setStatus(Status status);
 
   // Creates a new `StateMachine` for each record fed
   bool store(const Record* record);

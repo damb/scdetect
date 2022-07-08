@@ -12,9 +12,11 @@ namespace detector {
 
 TemplateProcessor::TemplateProcessor(TemplateWaveform templateWaveform,
                                      Detector* parent)
-    : _crossCorrelation{std::move(templateWaveform)},
+    : _crossCorrelation{std::move(templateWaveform)}, _parent{parent} {}
 
-      _parent{parent} {}
+bool TemplateProcessor::finished() const {
+  return _status > Status::kWaitingForData;
+}
 
 void TemplateProcessor::reset() {
   reset(_streamState);
@@ -49,8 +51,11 @@ const TemplateWaveform& TemplateProcessor::templateWaveform() const {
 TemplateProcessor::EventHandler::EventHandler(TemplateProcessor* processor)
     : processor{processor} {}
 
-void TemplateProcessor::EventHandler::operator()(event::Record& ev) {
-  // TODO(damb): implement record buffer
+void TemplateProcessor::EventHandler::operator()(const event::Record& ev) {
+  // TODO(damb):
+  // - implement record buffer
+  // - feed to resampler; note that resampling cannot be treated as a separate
+  // event.
 
   // create new state machine
   processor->_stateMachines.emplace(ev.record.get(), processor);
