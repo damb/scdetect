@@ -13,52 +13,60 @@
 #include "detail.h"
 #include "linker/association.h"
 #include "linker/pot.h"
-#include "template_waveform_processor.h"
+#include "template_processor.h"
 
 namespace Seiscomp {
 namespace detect {
 namespace detector {
 
-// Associates `TemplateWaveformProcessor` results
+// A linker which implements matrix based phase association
 class Linker {
  public:
+  using PublishResultCallback = std::function<void(linker::Association &&)>;
+  using MergingStrategy = std::function<bool(
+      const linker::Association::TemplateResult &, double, double)>;
+
+  static const Core::TimeSpan DefaultSafetyMargin;
+
   explicit Linker(const Core::TimeSpan &onHold = Core::TimeSpan{0.0},
                   const Core::TimeSpan &arrivalOffsetThres = Core::TimeSpan{
                       2.0e-6});
 
   // Sets the arrival offset threshold
-  void setThresArrivalOffset(const boost::optional<Core::TimeSpan> &thres);
+  void setArrivalOffsetThreshold(const boost::optional<Core::TimeSpan> &thres);
   // Returns the current arrival offset threshold
-  boost::optional<Core::TimeSpan> thresArrivalOffset() const;
+  boost::optional<Core::TimeSpan> arrivalOffsetThreshold() const;
   // Sets the association threshold
-  void setThresAssociation(const boost::optional<double> &thres);
+  void setAssociationThreshold(const boost::optional<double> &thres);
   // Returns the association threshold
-  boost::optional<double> thresAssociation() const;
+  boost::optional<double> associationThreshold() const;
   // Configures the linker with a minimum number of required arrivals before
   // issuing a result
-  void setMinArrivals(const boost::optional<size_t> &n);
+  void setMinArrivals(const boost::optional<std::size_t> &n);
   // Returns the minimum number of arrivals required for linking
-  boost::optional<size_t> minArrivals() const;
+  boost::optional<std::size_t> minArrivals() const;
   // Sets the *on hold* duration
   void setOnHold(const Core::TimeSpan &duration);
   // Returns the current *on hold* duration
   Core::TimeSpan onHold() const;
 
-  using MergingStrategy = std::function<bool(
-      const linker::Association::TemplateResult &, double, double)>;
   // Sets the linker's merging strategy based on `mergingStrategyTypeId`
   void setMergingStrategy(MergingStrategy mergingStrategy);
   // Returns the number of associated channels
-  size_t channelCount() const;
+  std::size_t channelCount() const;
   // Returns the number of associated processors
-  size_t processorCount() const;
+  std::size_t size() const noexcept;
 
-  // Register the template waveform processor `proc` associated with the
-  // template arrival `arrival` for linking.
-  void add(const TemplateWaveformProcessor *proc, const Arrival &arrival,
-           const boost::optional<double> &mergingThreshold);
-  // Remove the processor identified by `procId`
-  void remove(const std::string &procId);
+  // Register the template processor identified by `templateProcessorId` and
+  // associated with the template arrival `arrival` for linking.
+  //
+  // - optionally set a template processor specific `mergingThreshold`
+  void registerTemplateProcessor(
+      const detail::ProcessorIdType &templateProcessorId,
+      const Arrival &arrival, const boost::optional<double> &mergingThreshold);
+
+  // Remove the template processor identified by `templateProcessorId`
+  void unregisterTemplateProcessor(const std::string &templateProcessorId);
   // Reset the linker
   //
   // - drops all pending results
@@ -66,22 +74,12 @@ class Linker {
   // Flushes the linker
   void flush();
 
-  // Feeds the `proc`'s result `res` to the linker
-  void feed(const TemplateWaveformProcessor *proc,
-            std::unique_ptr<const TemplateWaveformProcessor::MatchResult>
-                matchResult);
+  // Feeds the `templateProcessor`'s result `matchResult` to the linker
+  void feed(const TemplateProcessor &templateProcessor,
+            MatchResult &&matchResult);
 
-  using PublishResultCallback =
-      std::function<void(const linker::Association &)>;
   // Set the publish callback function
-  void setResultCallback(const PublishResultCallback &callback);
-
- protected:
-  // Processes the result `res` from `proc`
-  void process(const TemplateWaveformProcessor *proc,
-               const linker::Association::TemplateResult &result);
-  // Emit a result
-  void emitResult(const linker::Association &result);
+  void setResultCallback(PublishResultCallback callback);
 
  private:
   // Creates a POT where all participating processors are enabled
@@ -96,22 +94,18 @@ class Linker {
     explicit CandidatePOTData(std::size_t n)
         : offsets(n, linker::POT::tableDefault), mask(n, false) {}
   };
-  CandidatePOTData createCandidatePOTData(
-      const Candidate &candidate, const std::string &processorId,
-      const linker::Association::TemplateResult &newResult);
 
-  // `TemplateWaveformProcessor` processor
-  struct Processor {
-    const TemplateWaveformProcessor *proc;
+  // `TemplateProcessor` metadata required for phase association
+  struct TemplateProcessorInfo {
     // The template arrival associated
     Arrival arrival;
     // The processor specific merging threshold
     boost::optional<double> mergingThreshold;
   };
 
-  // Maps the processor id with `Processor`
-  using Processors = std::unordered_map<detail::ProcessorIdType, Processor>;
-  Processors _processors;
+  using TemplateProcessorInfos =
+      std::unordered_map<detail::ProcessorIdType, TemplateProcessorInfo>;
+  TemplateProcessorInfos _templateProcessorInfos;
 
   struct Candidate {
     // The final association
@@ -120,16 +114,27 @@ class Linker {
     Core::Time expired;
 
     explicit Candidate(const Core::Time &expired);
-    // Feeds the template result `res` to the event in order to be merged
-    void feed(const std::string &procId,
+    // Feeds the template result `res` to the candidate in order to be merged
+    void feed(const detail::ProcessorIdType &templateProcessorId,
               const linker::Association::TemplateResult &res);
     // Returns the number of associated processors
-    size_t associatedProcessorCount() const;
+    std::size_t associatedProcessorCount() const noexcept;
     // Returns `true` if the event must be considered as expired
     bool isExpired(const Core::Time &now) const;
   };
 
   using CandidateQueue = std::list<Candidate>;
+
+  // Processes the result `result` from `templateProcessor`
+  void process(const TemplateProcessor &templateProcessor,
+               const linker::Association::TemplateResult &result);
+  // Emit a result
+  void emitResult(linker::Association &&result);
+
+  CandidatePOTData createCandidatePOTData(
+      const Candidate &candidate, const detail::ProcessorIdType &processorId,
+      const linker::Association::TemplateResult &newResult);
+
   CandidateQueue _queue;
 
   // The linker's reference POT
@@ -159,7 +164,7 @@ class Linker {
       }};
 
   // The result callback function
-  boost::optional<PublishResultCallback> _resultCallback;
+  PublishResultCallback _resultCallback;
 };
 
 }  // namespace detector
