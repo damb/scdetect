@@ -48,21 +48,95 @@ const TemplateWaveform& TemplateProcessor::templateWaveform() const {
   return _crossCorrelation.templateWaveform();
 }
 
+std::size_t TemplateProcessor::size() const noexcept {
+  return _stateMachines.size();
+}
+
+TemplateProcessor::Status TemplateProcessor::status() const { return _status; }
+
+const Core::TimeSpan& TemplateProcessor::configuredBufferSize() const {
+  return _buffer.configuredBufferSize();
+}
+
+void TemplateProcessor::setConfiguredBufferSize(
+    const Core::TimeSpan& duration) {
+  _buffer.setConfiguredBufferSize(duration);
+}
+
 TemplateProcessor::EventHandler::EventHandler(TemplateProcessor* processor)
     : processor{processor} {}
 
 void TemplateProcessor::EventHandler::operator()(const event::Record& ev) {
-  // TODO(damb):
-  // - implement record buffer
-  // - feed to resampler; note that resampling cannot be treated as a separate
-  // event.
+  if (processor->status() > Status::kWaitingForData ||
+      !static_cast<bool>(ev.record->data())) {
+    return;
+  }
 
-  // create new state machine
-  processor->_stateMachines.emplace(ev.record.get(), processor);
+  DoubleArrayPtr data{
+      dynamic_cast<DoubleArray*>(ev.record->data()->copy(Array::DOUBLE))};
+
+  auto& streamState{processor->_streamState};
+  if (streamState.lastRecord) {
+    if (ev.record == streamState.lastRecord) {
+      return;
+    } else if (ev.record->samplingFrequency() !=
+               streamState.samplingFrequency) {
+      SCDETECT_LOG_WARNING_PROCESSOR(
+          processor,
+          "%s: sampling frequency changed, resetting stream (sfreq_record != "
+          "sfreq_stream): %f != %f",
+          ev.record->streamID().c_str(), ev.record->samplingFrequency(),
+          streamState.samplingFrequency);
+
+      // flush buffer and buffer this record with the new sampling frequency
+      flushBuffer(streamState);
+      processor->_buffer.feed(ev.record->timeWindow(), data);
+      reset(streamState);
+    } else if (!processor->handleGap(streamState, ev.record.get(), data)) {
+      return;
+    }
+
+    streamState.dataTimeWindow.setEndTime(ev.record->endTime());
+  }
+
+  if (!streamState.lastRecord) {
+    try {
+      processor->setupStream(ev.record.get());
+    } catch (std::exception& e) {
+      SCDETECT_LOG_WARNING_PROCESSOR(processor,
+                                     "%s: Failed to setup stream: %s",
+                                     ev.record->streamID().c_str(), e.what());
+      return;
+    }
+  }
+
+  streamState.lastSample = (*data)[data->size() - 1];
+
+  processor->_buffer.feed(ev.record->timeWindow(), data);
+  if (processor->_buffer.full()) {
+    flushBuffer(streamState);
+  }
+
+  processor->tryToRunNextStateMachine();
+
+  // TODO(damb):
+  // - feed to resampler; note that resampling cannot be treated as a separate
+  // event, however, it may be offloaded to an executor
 }
 
 void TemplateProcessor::EventHandler::operator()(InternalEvent& ev) {
   boost::variant2::visit(InternalEventHandler{processor}, ev);
+}
+
+void TemplateProcessor::EventHandler::flushBuffer(
+    const StreamState& streamState) {
+  auto bufferedRecord{processor->_buffer.contiguousRecord<double>(
+      streamState.lastRecord->networkCode(),
+      streamState.lastRecord->stationCode(),
+      streamState.lastRecord->locationCode(),
+      streamState.lastRecord->channelCode(), streamState.samplingFrequency)};
+  processor->store(bufferedRecord.release());
+  processor->_buffer.reset();
 }
 
 TemplateProcessor::InternalEventHandler::InternalEventHandler(
@@ -131,7 +205,8 @@ void TemplateProcessor::reset(StreamState& streamState) {
 }
 
 bool TemplateProcessor::store(const Record* record) {
-  // TODO TODO TODO
+  // create new state machine
+  _stateMachines.emplace(record, this);
   return true;
 }
 
@@ -162,6 +237,30 @@ bool TemplateProcessor::tryToRunNextStateMachine() {
     return true;
   }
   return false;
+}
+
+void TemplateProcessor::setupStream(const Record* record) {
+  const auto& f{record->samplingFrequency()};
+  _streamState.samplingFrequency = f;
+
+  if (gapInterpolation()) {
+    setMinimumGapThreshold(_streamState, record, id());
+  }
+
+  _streamState.neededSamples = std::lround(_initTime.value_or(0) * f);
+  if (_streamState.filter) {
+    _streamState.filter->setSamplingFrequency(f);
+  }
+
+  // update the received data timewindow
+  _streamState.dataTimeWindow = record->timeWindow();
+
+  if (_streamState.filter) {
+    _streamState.filter->setStartTime(record->startTime());
+    _streamState.filter->setStreamID(
+        record->networkCode(), record->stationCode(), record->locationCode(),
+        record->channelCode());
+  }
 }
 
 }  // namespace detector

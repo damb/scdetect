@@ -10,11 +10,13 @@
 #include <queue>
 
 #include "../def.h"
+#include "../processing/detail/gap_interpolate.h"
 #include "../processing/processor.h"
 #include "../processing/stream.h"
 #include "../template_waveform.h"
 #include "detail.h"
 #include "event/record.h"
+#include "template_processor/buffer.h"
 #include "template_processor/state_machine.h"
 
 namespace Seiscomp {
@@ -26,13 +28,9 @@ class Detector;
 // Non-blocking event-driven template waveform processor implementation
 //
 // - Creates for every record fed a dedicated `ProcessorStateMachine`
-// - Does not implement gap interpolation
-//
-// TODO(damb): due to the event-driven implementation it is better to not
-// inherit from `processing::WaveformProcessor`:
-//  -> allow to configure operators (for e.g. buffering - which implements gap
-//  interpolation)
-class TemplateProcessor : public processing::Processor {
+// - Implements gap interpolation facilities
+class TemplateProcessor : public processing::Processor,
+                          public processing::detail::InterpolateGaps {
   using InternalEvent = template_processor::StateMachine::Event;
 
  public:
@@ -90,11 +88,25 @@ class TemplateProcessor : public processing::Processor {
   // Returns the number of `StateMachine`s currently queued
   std::size_t size() const noexcept;
 
+  // Returns the processor's status
+  Status status() const;
+
+  const Core::TimeSpan& configuredBufferSize() const;
+  void setConfiguredBufferSize(const Core::TimeSpan& duration);
+
+ protected:
+  bool fill(processing::StreamState& streamState, const Record* record,
+            DoubleArrayPtr& data) override;
+
  private:
-  struct EventHandler {
+  class EventHandler {
+   public:
     explicit EventHandler(TemplateProcessor* processor);
     void operator()(const event::Record& ev);
     void operator()(InternalEvent& ev);
+
+   private:
+    void flushBuffer(const StreamState& streamState);
 
     TemplateProcessor* processor{nullptr};
   };
@@ -135,6 +147,8 @@ class TemplateProcessor : public processing::Processor {
 
   friend HandleFinished;
 
+  using StateMachines = std::queue<template_processor::StateMachine>;
+
   static void reset(StreamState& streamState);
 
   // Set the processor's status
@@ -147,14 +161,18 @@ class TemplateProcessor : public processing::Processor {
   // run, else `false`.
   bool tryToRunNextStateMachine();
 
+  void setupStream(const Record* record);
+
   // XXX(damb): for optimization: in future, state machines might be executed
   // in parallel. However, the `TemplateProcessor` needs to make sure that
   // transitions are executed sequentially (i.e. due to the nature of the the
   // time series data itself, filters, etc.).
-  using StateMachines = std::queue<template_processor::StateMachine>;
   StateMachines _stateMachines;
 
   detail::CrossCorrelation _crossCorrelation;
+
+  // Waveform data record buffer
+  template_processor::Buffer _buffer;
 
   StreamState _streamState;
 

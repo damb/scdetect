@@ -251,20 +251,21 @@ void Detector::Builder::finalize() {
     const auto &waveformStreamId{procConfigPair.first};
     auto &procConfig{procConfigPair.second};
 
+    // configure gap interpolation
+    procConfig.processor.setGapThreshold(
+        Core::TimeSpan{product()->_config.gapThreshold});
+    procConfig.processor.setGapTolerance(
+        Core::TimeSpan{product()->_config.gapTolerance});
+    procConfig.processor.setGapInterpolation(
+        product()->_config.gapInterpolation);
+
     const auto &meta{procConfig.metadata};
     boost::optional<std::string> phase_hint;
     try {
       phase_hint = meta.pick->phaseHint();
     } catch (Core::ValueException &e) {
     }
-    // TODO(damb): configure gap interpolation (most probably this will be
-    // implemented as port of the `TemplateProcessor`'s *buffering operator*)
-    /* procConfig.processor->setGapThreshold( */
-    /*     Core::TimeSpan{product()->_config.gapThreshold}); */
-    /* procConfig.processor->setGapTolerance( */
-    /*     Core::TimeSpan{product()->_config.gapTolerance}); */
-    /* procConfig.processor->setGapInterpolation( */
-    /*     product()->_config.gapInterpolation); */
+
     detector::Arrival templateArrival{
         {meta.pick->time().value(), meta.pick->waveformID(), phase_hint,
          meta.pick->time().value() - _origin->time().value()},
