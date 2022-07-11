@@ -10,6 +10,7 @@ namespace detector {
 namespace event {
 
 struct Link {
+  detail::ProcessorIdType detectorId;
   detail::ProcessorIdType templateProcessorId;
 
   MatchResult matchResult;

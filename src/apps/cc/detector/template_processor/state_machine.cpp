@@ -3,9 +3,8 @@
 #include <cmath>
 
 #include "../detector.h"
-#include "../event/detector.h"
 #include "../match_result.h"
-#include "template_processor.h"
+#include "../template_processor.h"
 
 namespace Seiscomp {
 namespace detect {
@@ -16,12 +15,14 @@ StateMachine::StateMachine(const Record* record,
                            const TemplateProcessor* parent)
     : _record{record}, _parent{parent} {}
 
+StateMachine::Transitions::Transitions(StateMachine* stateMachine)
+    : stateMachine{stateMachine} {}
+
 boost::optional<StateMachine::State> StateMachine::Transitions::operator()(
     InitState& s, const event::CheckSaturation& ev) {
   assert(stateMachine);
   assert(stateMachine->_data);
 
-  // XXX(damb): blocking
   const auto* samples{stateMachine->_data->typedData()};
   for (int i = 0; i < stateMachine->_data->size(); ++i) {
     if (fabs(samples[i]) >= ev.threshold) {
@@ -29,7 +30,7 @@ boost::optional<StateMachine::State> StateMachine::Transitions::operator()(
       finished.initialized = stateMachine->parent()->streamState().initialized;
       StateMachine::Event nextEvent{finished};
       stateMachine->prepareEvent(nextEvent);
-      stateMachine->parent()->parent()->postInternalEvent(std::move(nextEvent));
+      stateMachine->parent()->parent()->postEvent(std::move(nextEvent));
       return boost::optional<State>{SaturatedState{}};
     }
   }
@@ -41,7 +42,7 @@ boost::optional<StateMachine::State> StateMachine::Transitions::operator()(
     nextEvent = event::CrossCorrelate{};
   }
   stateMachine->prepareEvent(nextEvent);
-  stateMachine->parent()->parent()->postInternalEvent(std::move(nextEvent));
+  stateMachine->parent()->parent()->postEvent(std::move(nextEvent));
   return boost::optional<State>{SaturationCheckedState{}};
 }
 
@@ -111,7 +112,7 @@ boost::optional<StateMachine::State> StateMachine::Transitions::operator()(
     finished.initialized = stateMachine->parent()->streamState().initialized;
     StateMachine::Event nextEvent{finished};
     stateMachine->prepareEvent(nextEvent);
-    stateMachine->parent()->parent()->postInternalEvent(std::move(nextEvent));
+    stateMachine->parent()->parent()->postEvent(std::move(nextEvent));
   } else {
     const Core::TimeWindow tw{start, stateMachine->record().endTime()};
     for (const auto& m : localMaxima.values) {
@@ -131,14 +132,14 @@ boost::optional<StateMachine::State> StateMachine::Transitions::operator()(
     nextEvent.detectorId = stateMachine->parent()->parent()->id();
     nextEvent.templateProcessorId = stateMachine->parent()->id();
     nextEvent.matchResult = std::move(matchResult);
-    stateMachine->parent()->parent()->postInternalEvent(std::move(nextEvent));
+    stateMachine->parent()->parent()->postEvent(std::move(nextEvent));
   }
 
   return boost::optional<State>{ProcessedState{}};
 }
 
 void StateMachine::dispatch(const Event& ev) {
-  auto nextState{std::visit(Transitions{this}, _state, ev)};
+  auto nextState{boost::variant2::visit(Transitions{this}, _state, ev)};
   if (nextState) {
     _state = *nextState;
   }
@@ -158,7 +159,7 @@ void StateMachine::prepareEvent(Event& ev) {
   assert(parent());
   assert(parent()->parent());
 
-  std::visit(
+  boost::variant2::visit(
       [this](auto& e) {
         e.detectorId = parent()->parent()->id();
         e.templateProcessorId = parent()->id();
@@ -169,39 +170,36 @@ void StateMachine::prepareEvent(Event& ev) {
 boost::optional<StateMachine::State> StateMachine::filterAndEmit(
     const event::Filter& ev) {
   assert(_data);
-  // TODO(damb): currently blocking; execute async
+
   ev.filter->apply(*_data);
 
   // generate event for next processing step
   StateMachine::Event nextEvent{event::CrossCorrelate{}};
   prepareEvent(nextEvent);
-  parent()->parent()->postInternalEvent(std::move(nextEvent));
+  parent()->parent()->postEvent(std::move(nextEvent));
   return boost::optional<State>{FilteredState{}};
 }
 
 boost::optional<StateMachine::State> StateMachine::crossCorrelateAndEmit(
     const event::CrossCorrelate& ev) {
-  assert(ev.threadPoolExecutor);
   assert(_data);
 
-  // execute asynchronously
-  _currentFuture = ev.threadPoolExecutor->submit([this, &ev]() {
-    ev.filter->apply(*_data);
+  // execute synchronously
+  ev.filter->apply(*_data);
 
-    StateMachine::Event nextEvent;
-    if (!parent()->streamState().initialized) {
-      if (parent()->streamState().neededSamples >=
-          parent()->streamState().receivedSamples) {
-        nextEvent = event::Process{};
-      } else {
-        nextEvent = event::Finished{};
-      }
-    } else {
+  StateMachine::Event nextEvent;
+  if (!parent()->streamState().initialized) {
+    if (parent()->streamState().neededSamples >=
+        parent()->streamState().receivedSamples) {
       nextEvent = event::Process{};
+    } else {
+      nextEvent = event::Finished{};
     }
-    prepareEvent(nextEvent);
-    parent()->parent()->postInternalEvent(std::move(nextEvent));
-  });
+  } else {
+    nextEvent = event::Process{};
+  }
+  prepareEvent(nextEvent);
+  parent()->parent()->postEvent(std::move(nextEvent));
 
   // XXX(damb): actually, the state is *cross-correlating* when returning
   return boost::optional<State>{CrossCorrelatedState{}};

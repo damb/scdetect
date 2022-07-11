@@ -10,6 +10,7 @@ namespace detector {
 namespace event {
 
 struct TemplateProcessorEvent {
+  detail::ProcessorIdType detectorId;
   detail::ProcessorIdType templateProcessorId;
 };
 

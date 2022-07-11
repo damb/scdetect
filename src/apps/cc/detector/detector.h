@@ -130,6 +130,9 @@ class Detector : public processing::Processor {
 
   // Returns the detector's status
   Status status() const;
+  // Returns whether the detector is finished
+  bool finished() const;
+
   // Terminates the detector ignoring its current status
   void terminate();
 

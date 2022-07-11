@@ -452,6 +452,8 @@ bool Detector::enabled() const { return _enabled; }
 
 Detector::Status Detector::status() const { return _status; }
 
+bool Detector::finished() const { return _status > Status::kWaitingForData; }
+
 void Detector::terminate() {
   SCDETECT_LOG_DEBUG_PROCESSOR(this, "Terminating ...");
   flush();
