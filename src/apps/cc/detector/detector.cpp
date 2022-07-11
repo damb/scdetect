@@ -537,20 +537,7 @@ const boost::optional<Core::TimeSpan> &Detector::maxLatency() const {
 Detector::EventHandler::EventHandler(Detector *detector) : detector{detector} {}
 
 void Detector::EventHandler::operator()(event::Link &ev) {
-  assert(detector);
-
-  auto idx{detector->_templateProcessorIdIdx[ev.templateProcessorId]};
-  auto &templateProcessor{detector->_templateProcessors[idx]};
-
-  bool linkingEnabled{detector->_templateProcessorLinkingInfo[idx]};
-  if (linkingEnabled) {
-    detector->_linker.feed(templateProcessor, std::move(ev.matchResult));
-  }
-
-  event::Finished finished;
-  finished.initialized = true;
-  TemplateProcessor::Event nextEvent{finished};
-  templateProcessor.dispatch(nextEvent);
+  detector->link(ev.templateProcessorId, std::move(ev.matchResult));
 }
 
 void Detector::EventHandler::operator()(InternalEvent &ev) {
@@ -561,32 +548,7 @@ Detector::InternalEventHandler::InternalEventHandler(Detector *detector)
     : detector{detector} {}
 
 void Detector::InternalEventHandler::operator()(const event::Record &ev) {
-  auto *record{ev.record.get()};
-  if (!detector->hasAcceptableLatency(record)) {
-    logging::TaggedMessage msg{
-        record->streamID(),
-        "record exceeds acceptable latency. Dropping record (start=" +
-            record->startTime().iso() + ", end=" + record->endTime().iso() +
-            ")"};
-    SCDETECT_LOG_WARNING_PROCESSOR(detector, "%s",
-                                   logging::to_string(msg).c_str());
-    // nothing to do
-    return;
-  }
-
-  const auto templateProcessorIdxs{
-      detector->_templateProcessorWaveformStreamIdIdx.equal_range(
-          record->streamID())};
-  for (auto i{templateProcessorIdxs.first}; i != templateProcessorIdxs.second;
-       ++i) {
-    auto &templateProcessor{detector->_templateProcessors[i->second]};
-
-    TemplateProcessor::Event record{ev};
-    templateProcessor.dispatch(record);
-    if (templateProcessor.finished()) {
-      templateProcessor.reset();
-    }
-  }
+  detector->dispatchRecord(ev.record.get());
 }
 
 void Detector::registerTemplateProcessor(
@@ -652,6 +614,48 @@ void Detector::onTriggeredCallback(
 
 void Detector::onLinkerResultCallback(linker::Association &&association) {
   _detectionCandidateProcessor.feed(std::move(association));
+}
+
+void Detector::link(const detail::ProcessorIdType &templateProcessorId,
+                    MatchResult &&matchResult) {
+  auto idx{_templateProcessorIdIdx[templateProcessorId]};
+  auto &templateProcessor{_templateProcessors[idx]};
+
+  bool linkingEnabled{_templateProcessorLinkingInfo[idx]};
+  if (linkingEnabled) {
+    _linker.feed(templateProcessor, std::move(matchResult));
+  }
+
+  event::Finished finished;
+  finished.initialized = true;
+  TemplateProcessor::Event nextEvent{finished};
+  templateProcessor.dispatch(nextEvent);
+}
+
+void Detector::dispatchRecord(const Record *record) {
+  if (!hasAcceptableLatency(record)) {
+    logging::TaggedMessage msg{
+        record->streamID(),
+        "record exceeds acceptable latency. Dropping record (start=" +
+            record->startTime().iso() + ", end=" + record->endTime().iso() +
+            ")"};
+    SCDETECT_LOG_WARNING_PROCESSOR(this, "%s", logging::to_string(msg).c_str());
+    // nothing to do
+    return;
+  }
+
+  const auto templateProcessorIdxs{
+      _templateProcessorWaveformStreamIdIdx.equal_range(record->streamID())};
+  for (auto i{templateProcessorIdxs.first}; i != templateProcessorIdxs.second;
+       ++i) {
+    auto &templateProcessor{_templateProcessors[i->second]};
+
+    TemplateProcessor::Event ev{event::Record{record}};
+    templateProcessor.dispatch(ev);
+    if (templateProcessor.finished()) {
+      templateProcessor.reset();
+    }
+  }
 }
 
 void Detector::resetTemplateProcessorLinkingInfo() {

@@ -20,6 +20,7 @@
 #include "../processing/processor.h"
 #include "../waveform.h"
 #include "arrival.h"
+#include "detail.h"
 #include "detection.h"
 #include "detection_candidate.h"
 #include "detection_candidate_processor.h"
@@ -29,6 +30,7 @@
 #include "inventory.h"
 #include "linker.h"
 #include "linker/association.h"
+#include "match_result.h"
 #include "template_processor.h"
 
 namespace Seiscomp {
@@ -219,6 +221,10 @@ class Detector : public processing::Processor {
       const DetectionCandidate &candidate);
 
   void onLinkerResultCallback(linker::Association &&association);
+
+  void link(const detail::ProcessorIdType &templateProcessorId,
+            MatchResult &&matchResult);
+  void dispatchRecord(const Record *record);
 
   void resetTemplateProcessorLinkingInfo();
 
