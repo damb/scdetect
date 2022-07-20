@@ -13,7 +13,6 @@
 #include <seiscomp/datamodel/origin.h>
 #include <seiscomp/datamodel/pick.h>
 #include <seiscomp/datamodel/stationmagnitude.h>
-#include <seiscomp/processing/streambuffer.h>
 #include <seiscomp/system/commandline.h>
 
 #include <boost/optional/optional.hpp>
@@ -279,10 +278,6 @@ class Application : public Client::StreamApplication {
     }
   };
 
-  static Core::TimeSpan computeWaveformBufferSize(
-      const TemplateConfigs &templateConfigs, const binding::Bindings &bindings,
-      const Config &appConfig);
-
   bool isEventDatabaseEnabled() const;
 
   // Load events either from `eventDb` or `db`
@@ -330,9 +325,6 @@ class Application : public Client::StreamApplication {
 
   using DetectorIdx = std::unordered_multimap<WaveformStreamId, std::size_t>;
   DetectorIdx _detectorIdx;
-
-  // Ringbuffer
-  Processing::StreamBuffer _waveformBuffer;
 
   using Detections =
       std::unordered_multimap<WaveformStreamId, std::shared_ptr<DetectionItem>>;
