@@ -421,22 +421,7 @@ bool Application::run() {
 
 void Application::done() {
   if (!_config.templatesPrepare) {
-    // shutdown detector workers
-    for (auto &w : _detectorWorkers) {
-      w->postEvent(
-          worker::event::Command{worker::event::Command::Type::kShutdown});
-    }
-
-    for (auto &t : _detectorWorkerThreads) {
-      if (t.joinable()) {
-        try {
-          t.join();
-        } catch (const std::system_error &e) {
-          SCDETECT_LOG_WARNING("Failed to stop worker: %s", e.what());
-          continue;
-        }
-      }
-    }
+    shutdownDetectorWorkers();
 
     // flush pending detections
     for (const auto &detectionPair : _detections) {
@@ -1067,6 +1052,25 @@ bool Application::startDetectorWorkerThreads() {
   }
 
   return true;
+}
+
+void Application::shutdownDetectorWorkers() {
+  // shutdown detector workers
+  for (auto &w : _detectorWorkers) {
+    w->postEvent(
+        worker::event::Command{worker::event::Command::Type::kShutdown});
+  }
+
+  for (auto &t : _detectorWorkerThreads) {
+    if (t.joinable()) {
+      try {
+        t.join();
+      } catch (const std::system_error &e) {
+        SCDETECT_LOG_WARNING("Failed to stop worker: %s", e.what());
+        continue;
+      }
+    }
+  }
 }
 
 void Application::publishAndRemoveDetection(

@@ -297,6 +297,7 @@ class Application : public Client::StreamApplication {
       std::ifstream &ifs, WaveformHandlerIface *waveformHandler);
 
   bool startDetectorWorkerThreads();
+  void shutdownDetectorWorkers();
 
   // Registers a detection
   void registerDetection(const std::shared_ptr<DetectionItem> &detection);
