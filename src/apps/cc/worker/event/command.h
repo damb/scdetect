@@ -10,7 +10,7 @@ class Command {
  public:
   enum class Type { kShutdown };
 
-  explicit Command(Type type = Type ::kShutdown);
+  explicit Command(Type type = Type::kShutdown);
 
   Type type() const;
 
