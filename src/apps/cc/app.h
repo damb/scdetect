@@ -2,7 +2,6 @@
 #define SCDETECT_APPS_CC_APP_H_
 
 #include <seiscomp/client/application.h>
-#include <seiscomp/client/monitor.h>
 #include <seiscomp/client/streamapplication.h>
 #include <seiscomp/core/datetime.h>
 #include <seiscomp/core/record.h>
@@ -164,12 +163,6 @@ class Application : public Client::StreamApplication {
 
     std::string amplitudeMessagingGroup{"AMPLITUDE"};
 
-    // Monitoring
-    boost::optional<std::size_t> objectThroughputInfoThreshold;
-    boost::optional<std::size_t> objectThroughputWarningThreshold;
-
-    boost::optional<std::size_t> objectThroughputNofificationInterval;
-
     // default configurations
     config::PublishConfig publishConfig;
 
@@ -195,10 +188,6 @@ class Application : public Client::StreamApplication {
   bool init() override;
   bool run() override;
   void done() override;
-
-  bool dispatch(Core::BaseObject *obj) override;
-
-  void handleTimeout() override;
 
   void handleRecord(Record *rec) override;
 
@@ -439,10 +428,6 @@ class Application : public Client::StreamApplication {
   // The queue used for time window processor removal
   TimeWindowProcessorQueue _timeWindowProcessorRemovalQueue;
   bool _timeWindowProcessorRegistrationBlocked{false};
-
-  // Used to monitor the average object throughput
-  Client::RunningAverage _averageObjectThroughputMonitor{
-      settings::kObjectThroughputAverageTimeSpan};
 };
 
 }  // namespace detect
