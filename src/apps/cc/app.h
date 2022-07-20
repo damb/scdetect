@@ -28,13 +28,11 @@
 #include <unordered_map>
 #include <vector>
 
-#include "amplitude_processor.h"
 #include "binding.h"
 #include "config/detector.h"
 #include "config/template_family.h"
 #include "detector/detector.h"
 #include "exception.h"
-#include "processing/timewindow_processor.h"
 #include "settings.h"
 #include "util/waveform_stream_id.h"
 #include "waveform.h"
@@ -281,35 +279,9 @@ class Application : public Client::StreamApplication {
     }
   };
 
-  // Initialize amplitude processor factory
-  static bool initAmplitudeProcessorFactory();
-
-  // Initialize magnitude processor factory callbacks
-  static bool initMagnitudeProcessorFactory(
-      WaveformHandlerIface *waveformHandler,
-      const TemplateConfigs &templateConfigs, const binding::Bindings &bindings,
-      const Config &appConfig);
-
-  // Initialize station magnitudes
-  static bool initStationMagnitudes(const TemplateConfigs &templateConfigs);
-  // Initialize template families
-  //
-  // - `ifs` references a template family configuration input file stream
-  static bool initTemplateFamilies(std::ifstream &ifs,
-                                   WaveformHandlerIface *waveformHandler,
-                                   const TemplateConfigs &templateConfigs,
-                                   const binding::Bindings &bindings,
-                                   const Config &appConfig);
-
   static Core::TimeSpan computeWaveformBufferSize(
       const TemplateConfigs &templateConfigs, const binding::Bindings &bindings,
       const Config &appConfig);
-
-  using NetworkMagnitudeComputationStrategy =
-      std::function<void(const std::vector<DataModel::StationMagnitudeCPtr> &,
-                         DataModel::Magnitude &)>;
-  static const NetworkMagnitudeComputationStrategy
-      medianNetworkMagnitudeComputationStrategy;
 
   bool isEventDatabaseEnabled() const;
 
@@ -328,43 +300,7 @@ class Application : public Client::StreamApplication {
   bool initDetectors(std::ifstream &ifs, WaveformHandlerIface *waveformHandler,
                      TemplateConfigs &templateConfigs);
 
-  // Initialize amplitude processors
-  bool initAmplitudeProcessors(std::shared_ptr<DetectionItem> &detectionItem,
-                               const detector::Detector &detectorProcessor);
-
-  // Creates an amplitude
-  //
-  // - if `amplitudeType` is passed it overrides the default value
-  DataModel::AmplitudePtr createAmplitude(
-      const AmplitudeProcessor *processor, const Record *record,
-      const AmplitudeProcessor::AmplitudeCPtr &amplitude,
-      const boost::optional<std::string> &methodId,
-      const boost::optional<std::string> &amplitudeType = boost::none);
-
-  // Computes a magnitude based on `amplitude`
-  DataModel::StationMagnitudePtr createMagnitude(
-      const DataModel::Amplitude &amplitude, const std::string &methodId = "",
-      const std::string &processorId = "");
-
-  // Computes the network magnitudes based `stationMagnitudes`
-  std::vector<DataModel::MagnitudePtr> createNetworkMagnitudes(
-      const std::vector<DataModel::StationMagnitudeCPtr> &stationMagnitudes,
-      NetworkMagnitudeComputationStrategy strategy,
-      const std::string &methodId = "", const std::string &processorId = "");
-
   using WaveformStreamId = std::string;
-  // Registers an amplitude `processor` for `waveformStreamIds`
-  void registerAmplitudeProcessor(
-      const std::shared_ptr<AmplitudeProcessor> &processor,
-      DetectionItem &detection);
-  // Registers a time window `processor` for `waveformStreamIds`
-  void registerTimeWindowProcessor(
-      const std::vector<WaveformStreamId> &waveformStreamIds,
-      const std::shared_ptr<processing::TimeWindowProcessor> &);
-  // Unregisters time window `processor`
-  void removeTimeWindowProcessor(
-      const std::shared_ptr<processing::TimeWindowProcessor> &processor);
-
   // Registers a detection
   void registerDetection(const std::shared_ptr<DetectionItem> &detection);
   // Removes a detection
@@ -408,26 +344,6 @@ class Application : public Client::StreamApplication {
   // The queue used for detection removal
   DetectionQueue _detectionRemovalQueue;
   bool _detectionRegistrationBlocked{false};
-
-  using TimeWindowProcessors =
-      std::unordered_multimap<WaveformStreamId,
-                              std::shared_ptr<processing::TimeWindowProcessor>>;
-  TimeWindowProcessors _timeWindowProcessors;
-  using ProcessorId = std::string;
-  using TimeWindowProcessorIdx =
-      std::unordered_map<ProcessorId, std::vector<WaveformStreamId>>;
-  TimeWindowProcessorIdx _timeWindowProcessorIdx;
-
-  struct TimeWindowProcessorQueueItem {
-    std::vector<WaveformStreamId> waveformStreamIds;
-    std::shared_ptr<processing::TimeWindowProcessor> timeWindowProcessor;
-  };
-  using TimeWindowProcessorQueue = std::list<TimeWindowProcessorQueueItem>;
-  // The queue used for time window processor registration
-  TimeWindowProcessorQueue _timeWindowProcessorRegistrationQueue;
-  // The queue used for time window processor removal
-  TimeWindowProcessorQueue _timeWindowProcessorRemovalQueue;
-  bool _timeWindowProcessorRegistrationBlocked{false};
 };
 
 }  // namespace detect
