@@ -419,10 +419,6 @@ bool Application::run() {
     return true;
   }
 
-  if (_detectors.empty()) {
-    return false;
-  }
-
   if (commandline().hasOption("ep")) {
     _ep = util::make_smart<DataModel::EventParameters>();
   }
@@ -444,10 +440,7 @@ bool Application::run() {
 
 void Application::done() {
   if (!_config.templatesPrepare) {
-    // terminate detectors
-    for (const auto &detector : _detectors) {
-      detector->terminate();
-    }
+    // TODO(damb): terminate `DetectorWorkers`
 
     // flush pending detections
     for (const auto &detectionPair : _detections) {
@@ -477,26 +470,6 @@ void Application::handleRecord(Record *rec) {
   RecordPtr ownershipGuard{rec};
 
   if (!rec || !rec->data()) return;
-
-  auto detectorRange{_detectorIdx.equal_range(std::string{rec->streamID()})};
-  for (auto it = detectorRange.first; it != detectorRange.second; ++it) {
-    auto &detector{_detectors[it->second]};
-    if (detector->enabled()) {
-      if (!detector->feed(rec)) {
-        logging::TaggedMessage msg{it->first,
-                                   "Failed to feed record into detector (" +
-                                       detector->id() + "). Resetting."};
-        SCDETECT_LOG_WARNING("%s", logging::to_string(msg).c_str());
-        detector->reset();
-        continue;
-      }
-    } else {
-      logging::TaggedMessage msg{
-          it->first, "Skip feeding record to detector (id=" + detector->id() +
-                         "). Reason: Disabled."};
-      SCDETECT_LOG_WARNING("%s", logging::to_string(msg).c_str());
-    }
-  }
 
   {
     _detectionRegistrationBlocked = true;
@@ -532,16 +505,6 @@ void Application::handleRecord(Record *rec) {
       _detectionQueue.pop_front();
       registerDetection(detection);
     }
-  }
-}
-
-const Application::Detectors &Application::detectors() const {
-  return _detectors;
-}
-
-void Application::resetDetectors() {
-  for (auto &detector : _detectors) {
-    detector->reset();
   }
 }
 
@@ -1108,12 +1071,7 @@ bool Application::initDetectors(std::ifstream &ifs,
               processDetection(processor, record, std::move(detection));
             });
 
-        _detectors.emplace_back(std::move(detector));
-        auto idx{_detectors.size() - 1};
-
-        for (const auto &waveformStreamId : waveformStreamIds) {
-          _detectorIdx.emplace(waveformStreamId, idx);
-        }
+        //_detectors.emplace_back(std::move(detector));
 
         templateConfigs.push_back(tc);
 

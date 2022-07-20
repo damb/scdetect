@@ -30,7 +30,6 @@
 #include "binding.h"
 #include "config/detector.h"
 #include "config/template_family.h"
-#include "detector/detector.h"
 #include "exception.h"
 #include "settings.h"
 #include "util/waveform_stream_id.h"
@@ -188,13 +187,8 @@ class Application : public Client::StreamApplication {
 
   void handleRecord(Record *rec) override;
 
-  using Detectors = std::vector<std::unique_ptr<detector::Detector>>;
-  const Detectors &detectors() const;
-  // Reset detectors
-  void resetDetectors();
-
  private:
-  using Picks = std::vector<DataModel::PickCPtr>;
+  using WaveformStreamId = std::string;
   using TemplateConfigs = std::vector<config::TemplateConfig>;
 
   struct DetectionItem {
@@ -244,7 +238,7 @@ class Application : public Client::StreamApplication {
     DataModel::OriginPtr origin;
 
     std::string detectorId;
-    std::shared_ptr<const detector::Detector::Detection> detection;
+    // std::shared_ptr<const detector::Detector::Detection> detection;
 
     std::size_t numberOfRequiredAmplitudes{};
     std::size_t numberOfRequiredMagnitudes{};
@@ -295,7 +289,6 @@ class Application : public Client::StreamApplication {
   bool initDetectors(std::ifstream &ifs, WaveformHandlerIface *waveformHandler,
                      TemplateConfigs &templateConfigs);
 
-  using WaveformStreamId = std::string;
   // Registers a detection
   void registerDetection(const std::shared_ptr<DetectionItem> &detection);
   // Removes a detection
@@ -310,9 +303,6 @@ class Application : public Client::StreamApplication {
 
   void publishAndRemoveDetection(std::shared_ptr<DetectionItem> &detection);
 
-  std::unique_ptr<DataModel::Comment> createTemplateWaveformTimeInfoComment(
-      const detector::Detector::Detection::TemplateResult &templateResult);
-
   Config _config;
   binding::Bindings _bindings;
 
@@ -320,11 +310,6 @@ class Application : public Client::StreamApplication {
   ObjectLog *_outputAmplitudes;
 
   DataModel::EventParametersPtr _ep;
-
-  Detectors _detectors;
-
-  using DetectorIdx = std::unordered_multimap<WaveformStreamId, std::size_t>;
-  DetectorIdx _detectorIdx;
 
   using Detections =
       std::unordered_multimap<WaveformStreamId, std::shared_ptr<DetectionItem>>;
