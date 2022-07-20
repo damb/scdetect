@@ -85,6 +85,7 @@ Application::Application(int argc, char **argv)
   setLoadInventoryEnabled(true);
   setLoadConfigModuleEnabled(true);
   setMessagingEnabled(true);
+  setAutoAcquisitionStart(false);
 
   setPrimaryMessagingGroup("LOCATION");
 }
@@ -421,18 +422,6 @@ bool Application::run() {
 
   if (commandline().hasOption("ep")) {
     _ep = util::make_smart<DataModel::EventParameters>();
-  }
-
-  SCDETECT_LOG_DEBUG("Subscribing to streams required for processing");
-  subscribeToRecordStream(collectStreams());
-
-  if (!_config.playbackConfig.startTimeStr.empty()) {
-    recordStream()->setStartTime(_config.playbackConfig.startTime);
-    _config.playbackConfig.enabled = true;
-  }
-  if (!_config.playbackConfig.endTimeStr.empty()) {
-    recordStream()->setEndTime(_config.playbackConfig.endTime);
-    _config.playbackConfig.enabled = true;
   }
 
   return StreamApplication::run();
@@ -931,69 +920,6 @@ bool Application::loadEvents(const std::string &eventDb,
   }
 
   return loaded;
-}
-
-std::set<util::WaveformStreamID> Application::collectStreams() const {
-  std::set<util::WaveformStreamID> ret;
-
-  Core::Time amplitudeMLxStreamSubscriptionTime{
-      _config.playbackConfig.startTimeStr.empty()
-          ? Core::Time::GMT()
-          : _config.playbackConfig.startTime};
-
-  for (const auto &detectorIdxPair : _detectorIdx) {
-    util::WaveformStreamID waveformStreamId{detectorIdxPair.first};
-
-    ret.emplace(waveformStreamId);
-
-    if (_detectors[detectorIdxPair.second]->publishConfig().createAmplitudes) {
-      try {
-        auto amplitudeProcessingConfig{
-            _bindings
-                .at(waveformStreamId.netCode(), waveformStreamId.staCode(),
-                    waveformStreamId.locCode(), waveformStreamId.chaCode())
-                .amplitudeProcessingConfig};
-        const auto &amplitudeTypes{amplitudeProcessingConfig.amplitudeTypes};
-        bool disabledMLx{std::find(std::begin(amplitudeTypes),
-                                   std::end(amplitudeTypes),
-                                   "MLx") == std::end(amplitudeTypes)};
-        if (disabledMLx) {
-          continue;
-        }
-
-        util::HorizontalComponents horizontalComponents{
-            Client::Inventory::Instance(), waveformStreamId.netCode(),
-            waveformStreamId.staCode(),    waveformStreamId.locCode(),
-            waveformStreamId.chaCode(),    amplitudeMLxStreamSubscriptionTime};
-
-        for (const auto &horizontalComponent : horizontalComponents) {
-          ret.emplace(util::WaveformStreamID{
-              horizontalComponents.netCode(), horizontalComponents.staCode(),
-              horizontalComponents.locCode(), horizontalComponent->code()});
-        }
-      } catch (const Exception &) {
-        continue;
-      } catch (const std::out_of_range &) {
-        continue;
-      }
-    }
-  }
-
-  return ret;
-}
-
-bool Application::subscribeToRecordStream(
-    std::set<util::WaveformStreamID> waveformStreamIds) {
-  for (const auto &waveformStreamId : waveformStreamIds) {
-    SCDETECT_LOG_DEBUG("Subscribing to stream: %s",
-                       util::to_string(waveformStreamId).c_str());
-    if (!recordStream()->addStream(
-            waveformStreamId.netCode(), waveformStreamId.staCode(),
-            waveformStreamId.locCode(), waveformStreamId.chaCode())) {
-      return false;
-    }
-  }
-  return true;
 }
 
 bool Application::initDetectors(std::ifstream &ifs,

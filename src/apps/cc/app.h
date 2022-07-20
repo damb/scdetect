@@ -277,12 +277,6 @@ class Application : public Client::StreamApplication {
   // Load events either from `eventDb` or `db`
   bool loadEvents(const std::string &eventDb, DataModel::DatabaseQueryPtr db);
 
-  // Collect required streams
-  std::set<util::WaveformStreamID> collectStreams() const;
-  // Register `waveformStreamIds` at the record stream
-  bool subscribeToRecordStream(
-      std::set<util::WaveformStreamID> waveformStreamIds);
-
   // Initialize detectors
   //
   // - `ifs` references a template configuration input file stream
