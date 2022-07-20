@@ -446,6 +446,8 @@ std::size_t Detector::size() const noexcept {
   return _templateProcessors.size();
 }
 
+bool Detector::empty() const noexcept { return !size(); }
+
 void Detector::enable(bool enable) { _enabled = enable; }
 
 bool Detector::enabled() const { return _enabled; }

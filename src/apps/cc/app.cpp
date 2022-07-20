@@ -35,6 +35,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -50,11 +51,11 @@
 #include "log.h"
 #include "processing/processor.h"
 #include "resamplerstore.h"
-#include "util/horizontal_components.h"
 #include "util/memory.h"
 #include "util/util.h"
 #include "util/waveform_stream_id.h"
 #include "version.h"
+#include "worker/event/command.h"
 
 namespace Seiscomp {
 namespace detect {
@@ -365,28 +366,22 @@ bool Application::init() {
   waveformHandler =
       util::make_smart<InMemoryCache>(waveformHandler, /*raw=*/false);
 
-  // load template related data
-  // TODO(damb):
-  //
-  // - Allow parsing template configuration from profiles
   if (_config.pathTemplateJson.empty()) {
     SCDETECT_LOG_ERROR("Missing template configuration file.");
     return false;
   }
 
-  TemplateConfigs templateConfigs;
-  SCDETECT_LOG_INFO("Loading template configuration from %s",
+  SCDETECT_LOG_INFO("Loading template configuration from: \"%s\"",
                     _config.pathTemplateJson.c_str());
   try {
     std::ifstream ifs{_config.pathTemplateJson};
-    if (!initDetectors(ifs, waveformHandler.get(), templateConfigs) ||
-        templateConfigs.empty()) {
+
+    if (!initDetectorWorkers(ifs, waveformHandler.get())) {
       return false;
     }
   } catch (std::ifstream::failure &e) {
-    SCDETECT_LOG_ERROR(
-        "Failed to parse JSON template configuration file (%s): %s",
-        _config.pathTemplateJson.c_str(), e.what());
+    SCDETECT_LOG_ERROR("Failed to parse template configuration (%s): %s",
+                       _config.pathTemplateJson.c_str(), e.what());
     return false;
   }
 
@@ -394,15 +389,8 @@ bool Application::init() {
   if (configModule()) {
     _bindings.setDefault(_config.sensorLocationBindings);
 
-    SCDETECT_LOG_DEBUG("Loading binding configuration");
+    SCDETECT_LOG_DEBUG("Loading bindings configuration");
     _bindings.load(&configuration(), configModule(), name());
-  }
-
-  bool magnitudesForcedDisabled{_config.magnitudesForceMode &&
-                                !*_config.magnitudesForceMode};
-  // optionally configure magnitude processors
-  if (!magnitudesForcedDisabled) {
-    // TODO(damb): which `waveformHandler` to be used?
   }
 
   // free memory after initialization
@@ -424,12 +412,31 @@ bool Application::run() {
     _ep = util::make_smart<DataModel::EventParameters>();
   }
 
+  if (!startDetectorWorkerThreads()) {
+    return false;
+  }
+
   return StreamApplication::run();
 }
 
 void Application::done() {
   if (!_config.templatesPrepare) {
-    // TODO(damb): terminate `DetectorWorkers`
+    // shutdown detector workers
+    for (auto &w : _detectorWorkers) {
+      w->postEvent(
+          worker::event::Command{worker::event::Command::Type::kShutdown});
+    }
+
+    for (auto &t : _detectorWorkerThreads) {
+      if (t.joinable()) {
+        try {
+          t.join();
+        } catch (const std::system_error &e) {
+          SCDETECT_LOG_WARNING("Failed to stop worker: %s", e.what());
+          continue;
+        }
+      }
+    }
 
     // flush pending detections
     for (const auto &detectionPair : _detections) {
@@ -443,7 +450,7 @@ void Application::done() {
       ar.setFormattedOutput(true);
       ar << _ep;
       ar.close();
-      SCDETECT_LOG_DEBUG("Found %lu origins.", _ep->originCount());
+      SCDETECT_LOG_DEBUG("Found %lu origins", _ep->originCount());
       _ep.reset();
     }
   }
@@ -723,8 +730,8 @@ void Application::processDetection(
         std::make_shared<DetectionItem>(std::move(detectionItem))};
     registerDetection(detectionItemPtr);
 
-    // TODO(damb): send message to amp-mag worker which computes the amplitudes
-    // and magnitudes.
+    // TODO(damb): send message to amp-mag worker which computes the
+    // amplitudes and magnitudes.
   } else {
     publishDetection(detectionItem);
   }
@@ -922,9 +929,35 @@ bool Application::loadEvents(const std::string &eventDb,
   return loaded;
 }
 
-bool Application::initDetectors(std::ifstream &ifs,
-                                WaveformHandlerIface *waveformHandler,
-                                TemplateConfigs &templateConfigs) {
+bool Application::initDetectorWorkers(std::ifstream &ifs,
+                                      WaveformHandlerIface *waveformHandler) {
+  std::vector<std::unique_ptr<Detector>> detectors;
+  try {
+    detectors = createDetectors(ifs, waveformHandler);
+  } catch (const ConfigError &e) {
+    SCDETECT_LOG_ERROR("Failed to create detectors: %s", e.what());
+    return false;
+  }
+
+  if (detectors.empty()) {
+    SCDETECT_LOG_ERROR("Failed to create detectors: no detectors initialized.");
+    return false;
+  }
+
+  // TODO(damb): perform load balancing; currently all detectors are handled
+  // by a single `DetectorWorker`
+
+  auto worker{util::make_shared<DetectorWorker>(
+      worker::RecordStream{recordStreamURL()}, std::move(detectors))};
+
+  _detectorWorkers.emplace_back(worker);
+
+  return !_detectorWorkers.empty();
+}
+
+std::vector<std::unique_ptr<Detector>> Application::createDetectors(
+    std::ifstream &ifs, WaveformHandlerIface *waveformHandler) {
+  std::vector<std::unique_ptr<Detector>> ret;
   try {
     boost::property_tree::ptree pt;
     boost::property_tree::read_json(ifs, pt);
@@ -939,11 +972,11 @@ bool Application::initDetectors(std::ifstream &ifs,
                             tc.detectorId() + "): template ids must be unique"};
         }
 
-        SCDETECT_LOG_DEBUG("Creating detector processor (id=%s) ... ",
+        SCDETECT_LOG_DEBUG("Creating detector (id=%s) ... ",
                            tc.detectorId().c_str());
 
         auto detectorBuilder{
-            std::move(detector::Detector::Create(tc.originId())
+            std::move(Detector::Create(tc.originId())
                           .setId(tc.detectorId())
                           .setConfig(tc.publishConfig(), tc.detectorConfig(),
                                      _config.playbackConfig.enabled))};
@@ -956,50 +989,55 @@ bool Application::initDetectors(std::ifstream &ifs,
           } catch (builder::NoSensorLocation &e) {
             if (_config.skipTemplateIfNoSensorLocationData) {
               SCDETECT_LOG_WARNING(
-                  "%s. Skipping template waveform processor initialization.",
-                  e.what());
+                  "Skipping template processor initialization: %s", e.what());
               continue;
             }
-            throw;
+            throw ConfigError{"failed to create template processor: " +
+                              e.what()};
           } catch (builder::NoStream &e) {
             if (_config.skipTemplateIfNoStreamData) {
               SCDETECT_LOG_WARNING(
-                  "%s. Skipping template waveform processor initialization.",
-                  e.what());
+                  "Skipping template processor initialization: %s", e.what());
               continue;
             }
-            throw;
+            throw ConfigError{"failed to create template processor: " +
+                              e.what()};
           } catch (builder::NoPick &e) {
             if (_config.skipTemplateIfNoPick) {
               SCDETECT_LOG_WARNING(
-                  "%s. Skipping template waveform processor initialization.",
-                  e.what());
+                  "Skipping template processor initialization: %s", e.what());
               continue;
             }
-            throw;
+            throw ConfigError{"failed to create template processor: " +
+                              e.what()};
           } catch (builder::NoWaveformData &e) {
             if (_config.skipTemplateIfNoWaveformData) {
               SCDETECT_LOG_WARNING(
-                  "%s. Skipping template waveform processor initialization.",
-                  e.what());
+                  "Skipping template processor initialization: %s", e.what());
               continue;
             }
-            throw;
+            throw ConfigError{"failed to create template processor: " +
+                              e.what()};
           }
           waveformStreamIds.push_back(streamConfigPair.first);
         }
 
         auto detector{detectorBuilder.build()};
+        if (detector->empty()) {
+          SCDETECT_LOG_WARNING(
+              "Failed to create detector: failed to create template "
+              "processors");
+          continue;
+        }
+
         detector->setResultCallback(
-            [this](const detector::Detector *processor, const Record *record,
-                   std::unique_ptr<const detector::Detector::Detection>
-                       detection) {
-              processDetection(processor, record, std::move(detection));
+            [this](const Detector *detector, const Record *record,
+                   std::unique_ptr<const Detector::Detection> detection) {
+              // TODO(damb): implement callback
+              // processDetection(detector, record, std::move(detection));
             });
 
-        //_detectors.emplace_back(std::move(detector));
-
-        templateConfigs.push_back(tc);
+        ret.emplace_back(std::move(detector));
 
       } catch (Exception &e) {
         SCDETECT_LOG_WARNING("Failed to create detector: %s. Skipping.",
@@ -1008,25 +1046,26 @@ bool Application::initDetectors(std::ifstream &ifs,
       }
     }
   } catch (boost::property_tree::json_parser::json_parser_error &e) {
-    SCDETECT_LOG_ERROR(
-        "Failed to parse JSON template configuration file (%s): %s",
-        _config.pathTemplateJson.c_str(), e.what());
-    return false;
+    throw ConfigError{"failed to parse template configuration (" +
+                      _config.pathTemplateJson + "): " + e.what()};
   } catch (std::ifstream::failure &e) {
-    SCDETECT_LOG_ERROR(
-        "Failed to parse JSON template configuration file (%s): %s",
-        _config.pathTemplateJson.c_str(), e.what());
-    return false;
+    throw ConfigError{"failed to parse template configuration (" +
+                      _config.pathTemplateJson + "): " + e.what()};
   } catch (std::exception &e) {
-    SCDETECT_LOG_ERROR(
-        "Failed to parse JSON template configuration file (%s): %s",
-        _config.pathTemplateJson.c_str(), e.what());
-    return false;
+    throw ConfigError{"failed to parse template configuration (" +
+                      _config.pathTemplateJson + "): " + e.what()};
   } catch (...) {
-    SCDETECT_LOG_ERROR("Failed to parse JSON template configuration file (%s)",
-                       _config.pathTemplateJson.c_str());
-    return false;
+    throw ConfigError{"failed to parse template configuration (" +
+                      _config.pathTemplateJson + ")"};
   }
+  return ret;
+}
+
+bool Application::startDetectorWorkerThreads() {
+  for (auto &worker : _detectorWorkers) {
+    _detectorWorkerThreads.emplace_back(std::thread{[worker]() { *worker(); }});
+  }
+
   return true;
 }
 

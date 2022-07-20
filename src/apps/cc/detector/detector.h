@@ -123,6 +123,8 @@ class Detector : public processing::Processor {
 
   // Returns the number of underlying `TemplateProcessor`s
   std::size_t size() const noexcept;
+  // Returns whether the detector references underlying `TemplateProcessor`s
+  bool empty() const noexcept;
 
   // Enables (`true`) or disables (`false`) the detector
   void enable(bool enable);

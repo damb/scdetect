@@ -24,16 +24,19 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
 #include "binding.h"
 #include "config/detector.h"
 #include "config/template_family.h"
+#include "detector/detector.h"
 #include "exception.h"
 #include "settings.h"
 #include "util/waveform_stream_id.h"
 #include "waveform.h"
+#include "worker/detector_worker.h"
 
 namespace Seiscomp {
 namespace detect {
@@ -188,8 +191,12 @@ class Application : public Client::StreamApplication {
   void handleRecord(Record *rec) override;
 
  private:
+  using WorkerId = std::string;
   using WaveformStreamId = std::string;
-  using TemplateConfigs = std::vector<config::TemplateConfig>;
+  using DetectorWorker = worker::DetectorWorker;
+  using DetectorWorkers = std::vector<std::shared_ptr<DetectorWorker>>;
+  using DetectorWorkerIdx = std::unordered_map<WorkerId, std::size_t>;
+  using Detector = DetectorWorker::Detector;
 
   struct DetectionItem {
     explicit DetectionItem(const DataModel::OriginPtr &origin)
@@ -277,11 +284,19 @@ class Application : public Client::StreamApplication {
   // Load events either from `eventDb` or `db`
   bool loadEvents(const std::string &eventDb, DataModel::DatabaseQueryPtr db);
 
-  // Initialize detectors
+  // Initializes `DetectorWorker`s
+  //
+  // - Returns `true` if at least a single worker was initialized, else `false`
+  bool initDetectorWorkers(std::ifstream &ifs,
+                           WaveformHandlerIface *waveformHandler);
+
+  // Creates detectors
   //
   // - `ifs` references a template configuration input file stream
-  bool initDetectors(std::ifstream &ifs, WaveformHandlerIface *waveformHandler,
-                     TemplateConfigs &templateConfigs);
+  std::vector<std::unique_ptr<Detector>> createDetectors(
+      std::ifstream &ifs, WaveformHandlerIface *waveformHandler);
+
+  bool startDetectorWorkerThreads();
 
   // Registers a detection
   void registerDetection(const std::shared_ptr<DetectionItem> &detection);
@@ -304,6 +319,11 @@ class Application : public Client::StreamApplication {
   ObjectLog *_outputAmplitudes;
 
   DataModel::EventParametersPtr _ep;
+
+  DetectorWorkers _detectorWorkers;
+  DetectorWorkerIdx _detectorWorkerIdx;
+
+  std::vector<std::thread> _detectorWorkerThreads;
 
   using Detections =
       std::unordered_multimap<WaveformStreamId, std::shared_ptr<DetectionItem>>;
