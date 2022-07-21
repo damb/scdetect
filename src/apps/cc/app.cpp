@@ -449,44 +449,7 @@ void Application::done() {
 void Application::handleRecord(Record *rec) {
   // XXX(damb): the ownership of `rec` is transferred.
   RecordPtr ownershipGuard{rec};
-
-  if (!rec || !rec->data()) return;
-
-  {
-    _detectionRegistrationBlocked = true;
-
-    auto range{_detections.equal_range(rec->streamID())};
-    for (auto it = range.first; it != range.second; ++it) {
-      auto &detection{it->second};
-      // the detection must not be already in the removal list
-      if (std::find(std::begin(_detectionRemovalQueue),
-                    std::end(_detectionRemovalQueue),
-                    detection) != std::end(_detectionRemovalQueue)) {
-        continue;
-      }
-
-      // schedule the detection for deletion when finished
-      if (detection->ready()) {
-        publishAndRemoveDetection(detection);
-      }
-    }
-
-    _detectionRegistrationBlocked = false;
-
-    // remove outdated detections
-    while (!_detectionRemovalQueue.empty()) {
-      auto detection{_detectionRemovalQueue.front()};
-      _detectionRemovalQueue.pop_front();
-      publishAndRemoveDetection(detection);
-    }
-
-    // register pending detections
-    while (!_detectionQueue.empty()) {
-      const auto detection{_detectionQueue.front()};
-      _detectionQueue.pop_front();
-      registerDetection(detection);
-    }
-  }
+  // XXX(damb): do nothing
 }
 
 void Application::processDetection(
