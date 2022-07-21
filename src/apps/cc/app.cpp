@@ -59,26 +59,6 @@
 
 namespace Seiscomp {
 namespace detect {
-namespace {
-
-bool requiresMagnitude(const binding::Bindings &bindings,
-                       const std::string &magnitudeType) {
-  for (const auto &staConfigPair : bindings) {
-    for (const auto &sensorLocationConfigPair : staConfigPair.second) {
-      const auto &magnitudeProcessingConfig{
-          sensorLocationConfigPair.second.magnitudeProcessingConfig};
-      const auto &magnitudeTypes{magnitudeProcessingConfig.magnitudeTypes};
-      if (magnitudeProcessingConfig.enabled &&
-          std::find(std::begin(magnitudeTypes), std::end(magnitudeTypes),
-                    magnitudeType) != std::end(magnitudeTypes)) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-}  // namespace
 
 Application::Application(int argc, char **argv)
     : StreamApplication(argc, argv) {
@@ -423,11 +403,7 @@ void Application::done() {
   if (!_config.templatesPrepare) {
     shutdownDetectorWorkers();
 
-    // flush pending detections
-    for (const auto &detectionPair : _detections) {
-      publishDetection(detectionPair.second);
-    }
-    _detections.clear();
+    // TODO(damb): flush pending detections
 
     if (_ep) {
       IO::XMLArchive ar;
@@ -446,375 +422,51 @@ void Application::done() {
   StreamApplication::done();
 }
 
+bool dispatchNotification(int type, Core::BaseObject *obj) {
+  using WorkerNotificationType = WorkerNotification::Type;
+  if (type < static_cast<int>(WorkerNotificationType::kDetection)) {
+    assert(obj);
+
+    // XXX(damb): make sure the memory is freed
+    WorkerNotificationCPtr workerNotificationOwner{
+        static_cast<WorkerNotification *>(obj)};
+
+    std::ostringstream oss;
+    oss << workerNotificationOwner->threadId;
+
+    switch (type) {
+      case static_cast<int>(WorkerNotificationType::kInitializing):
+        SCDETECT_LOG_DEBUG_TAGGED(oss.str(), "Worker initializing ...");
+        break;
+      case static_cast<int>(WorkerNotificationType::kInitialized):
+        SCDETECT_LOG_DEBUG_TAGGED(oss.str(), "Worker initialized");
+        break;
+      case static_cast<int>(WorkerNotificationType::kRunning):
+        SCDETECT_LOG_DEBUG_TAGGED(oss.str(), "Worker running ...");
+        break;
+      case static_cast<int>(WorkerNotificationType::kTerminating):
+        SCDETECT_LOG_DEBUG_TAGGED(oss.str(), "Worker terminating ...");
+        break;
+      case static_cast<int>(WorkerNotificationType::kFinished):
+        SCDETECT_LOG_DEBUG_TAGGED(oss.str(), "Worker finished");
+        break;
+      default:
+        SCDETECT_LOG_WARNING("Unknown worker notification type");
+        return false;
+    }
+
+    return true;
+  }
+  // dispatch detection
+  // TODO TODO TODO
+
+  return true;
+}
+
 void Application::handleRecord(Record *rec) {
   // XXX(damb): the ownership of `rec` is transferred.
   RecordPtr ownershipGuard{rec};
   // XXX(damb): do nothing
-}
-
-void Application::processDetection(
-    const detector::Detector *processor, const Record *record,
-    std::unique_ptr<const detector::Detector::Detection> detection) {
-  assert(detection);
-
-  SCDETECT_LOG_DEBUG_PROCESSOR(
-      processor,
-      "Start processing detection (time=%s, associated_results=%d) ...",
-      detection->time.iso().c_str(), detection->templateResults.size());
-
-  Core::Time now{Core::Time::GMT()};
-
-  DataModel::CreationInfo ci;
-  ci.setAgencyID(agencyID());
-  ci.setAuthor(author());
-  ci.setCreationTime(now);
-
-  DataModel::OriginPtr origin{DataModel::Origin::Create()};
-  if (!origin) {
-    SCDETECT_LOG_WARNING_PROCESSOR(
-        processor, "Internal error: duplicate origin identifier");
-    return;
-  }
-
-  {
-    auto comment{util::make_smart<DataModel::Comment>()};
-    comment->setId(settings::kDetectorIdCommentId);
-    comment->setText(processor->id());
-    origin->add(comment.get());
-  }
-  {
-    auto comment{util::make_smart<DataModel::Comment>()};
-    comment->setId("scdetectResultCCC");
-    comment->setText(std::to_string(detection->score));
-    origin->add(comment.get());
-  }
-
-  origin->setCreationInfo(ci);
-  origin->setLatitude(DataModel::RealQuantity(detection->latitude));
-  origin->setLongitude(DataModel::RealQuantity(detection->longitude));
-  origin->setDepth(DataModel::RealQuantity(detection->depth));
-  origin->setTime(DataModel::TimeQuantity(detection->time));
-  origin->setMethodID(detection->publishConfig.originMethodId);
-  origin->setEpicenterFixed(true);
-  origin->setEvaluationMode(DataModel::EvaluationMode(DataModel::AUTOMATIC));
-
-  std::vector<double> azimuths;
-  std::vector<double> distances;
-  for (const auto &resultPair : detection->templateResults) {
-    double az, baz, dist;
-    const auto &sensorLocation{resultPair.second.sensorLocation};
-    Math::Geo::delazi(detection->latitude, detection->longitude,
-                      sensorLocation.latitude, sensorLocation.longitude, &dist,
-                      &az, &baz);
-
-    distances.push_back(dist);
-    azimuths.push_back(az);
-  }
-
-  std::sort(azimuths.begin(), azimuths.end());
-  std::sort(distances.begin(), distances.end());
-
-  DataModel::OriginQuality originQuality;
-  if (azimuths.size() > 2) {
-    double azGap{};
-    for (size_t i = 0; i < azimuths.size() - 1; ++i)
-      azGap = (azimuths[i + 1] - azimuths[i]) > azGap
-                  ? (azimuths[i + 1] - azimuths[i])
-                  : azGap;
-
-    originQuality.setAzimuthalGap(azGap);
-  }
-
-  if (!distances.empty()) {
-    originQuality.setMinimumDistance(distances.front());
-    originQuality.setMaximumDistance(distances.back());
-    originQuality.setMedianDistance(distances[distances.size() / 2]);
-  }
-
-  originQuality.setStandardError(1.0 - detection->score);
-  originQuality.setAssociatedStationCount(detection->numStationsAssociated);
-  originQuality.setUsedStationCount(detection->numStationsUsed);
-  originQuality.setAssociatedPhaseCount(detection->numChannelsAssociated);
-  originQuality.setUsedPhaseCount(detection->numChannelsUsed);
-
-  origin->setQuality(originQuality);
-
-  DetectionItem detectionItem{origin};
-  detectionItem.detectorId = processor->id();
-  detectionItem.detection = std::move(detection);
-
-  detectionItem.config = DetectionItem::ProcessorConfig{
-      processor->gapInterpolation(), processor->gapThreshold(),
-      processor->gapTolerance()};
-
-  const auto createPick = [](const detector::Arrival &arrival,
-                             bool asTemplateArrivalPick) {
-    DataModel::PickPtr ret{DataModel::Pick::Create()};
-    if (!ret) {
-      throw DuplicatePublicObjectId{"duplicate pick identifier"};
-    }
-
-    ret->setTime(DataModel::TimeQuantity{arrival.pick.time, boost::none,
-                                         arrival.pick.lowerUncertainty,
-                                         arrival.pick.upperUncertainty});
-    util::WaveformStreamID waveformStreamId{arrival.pick.waveformStreamId};
-    if (asTemplateArrivalPick) {
-      ret->setWaveformID(DataModel::WaveformStreamID{
-          waveformStreamId.netCode(), waveformStreamId.staCode(),
-          waveformStreamId.locCode(), waveformStreamId.chaCode(), ""});
-    } else {
-      ret->setWaveformID(DataModel::WaveformStreamID{
-          waveformStreamId.netCode(), waveformStreamId.staCode(),
-          waveformStreamId.locCode(),
-          util::getBandAndSourceCode(waveformStreamId), ""});
-    }
-    ret->setEvaluationMode(DataModel::EvaluationMode(DataModel::AUTOMATIC));
-
-    if (arrival.pick.phaseHint) {
-      ret->setPhaseHint(DataModel::Phase{*arrival.pick.phaseHint});
-    }
-    return ret;
-  };
-
-  const auto createArrival = [&ci](const detector::Arrival &arrival,
-                                   const DataModel::PickCPtr &pick) {
-    auto ret{util::make_smart<DataModel::Arrival>()};
-    if (!ret) {
-      throw DuplicatePublicObjectId{"duplicate arrival identifier"};
-    }
-    ret->setCreationInfo(ci);
-    ret->setPickID(pick->publicID());
-    ret->setPhase(arrival.phase);
-    if (arrival.weight) {
-      ret->setWeight(arrival.weight);
-    }
-    return ret;
-  };
-
-  auto createPicks{detectionItem.detection->publishConfig.createArrivals ||
-                   detectionItem.detection->publishConfig.createAmplitudes ||
-                   detectionItem.detection->publishConfig.createMagnitudes};
-  if (createPicks) {
-    using PhaseCode = std::string;
-    using ProcessedPhaseCodes = std::unordered_set<PhaseCode>;
-    using SensorLocationStreamId = std::string;
-    using SensorLocationStreamIdProcessedPhaseCodesMap =
-        std::unordered_map<SensorLocationStreamId, ProcessedPhaseCodes>;
-    SensorLocationStreamIdProcessedPhaseCodesMap processedPhaseCodes;
-
-    for (const auto &resultPair : detectionItem.detection->templateResults) {
-      const auto &res{resultPair.second};
-
-      auto sensorLocationStreamId{util::getSensorLocationStreamId(
-          util::WaveformStreamID{res.arrival.pick.waveformStreamId})};
-
-      try {
-        const auto pick{createPick(res.arrival, false)};
-        if (!pick->add(createTemplateWaveformTimeInfoComment(res).release())) {
-          SCDETECT_LOG_WARNING_PROCESSOR(processor,
-                                         "Internal error: failed to add "
-                                         "template waveform time info comment");
-        }
-
-        auto &processed{processedPhaseCodes[sensorLocationStreamId]};
-        auto phaseAlreadyProcessed{
-            std::find(std::begin(processed), std::end(processed),
-                      res.arrival.phase) != std::end(processed)};
-        // XXX(damb): assign a phase only once per sensor location
-        if (detectionItem.detection->publishConfig.createArrivals &&
-            !phaseAlreadyProcessed) {
-          const auto arrival{createArrival(res.arrival, pick)};
-          detectionItem.arrivalPicks.push_back({arrival, pick});
-          processed.emplace(res.arrival.phase);
-        }
-
-        if (detectionItem.detection->publishConfig.createAmplitudes ||
-            detectionItem.detection->publishConfig.createMagnitudes) {
-          detectionItem.amplitudePickMap.emplace(
-              res.processorId,
-              DetectionItem::Pick{res.arrival.pick.waveformStreamId, pick});
-        }
-      } catch (DuplicatePublicObjectId &e) {
-        SCDETECT_LOG_WARNING_PROCESSOR(processor, "Internal error: %s",
-                                       e.what());
-        continue;
-      }
-    }
-  }
-
-  // create theoretical template arrivals
-  if (detectionItem.detection->publishConfig.createTemplateArrivals) {
-    for (const auto &a :
-         detectionItem.detection->publishConfig.theoreticalTemplateArrivals) {
-      try {
-        const auto pick{createPick(a, true)};
-        const auto arrival{createArrival(a, pick)};
-        detectionItem.arrivalPicks.push_back({arrival, pick});
-      } catch (DuplicatePublicObjectId &e) {
-        SCDETECT_LOG_WARNING_PROCESSOR(processor, "Internal error: %s",
-                                       e.what());
-        continue;
-      }
-    }
-  }
-
-  auto magnitudeForcedEnabled{_config.magnitudesForceMode &&
-                              *_config.magnitudesForceMode};
-  auto amplitudeForcedEnabled{
-      (_config.amplitudesForceMode && *_config.amplitudesForceMode) ||
-      magnitudeForcedEnabled};
-  auto amplitudeForcedDisabled{
-      (_config.amplitudesForceMode && !*_config.amplitudesForceMode) &&
-      !magnitudeForcedEnabled};
-
-  if (amplitudeForcedEnabled ||
-      (!amplitudeForcedDisabled &&
-       detectionItem.detection->publishConfig.createAmplitudes)) {
-    // XXX(damb): as soon as either amplitudes or magnitudes need to be
-    // computed, the detection is issued as a wholesale due to simplicity.
-    // (Note that the amplitudes could be issued independently from the origin
-    // while magnitudes need to be associated to the origin.)
-    auto detectionItemPtr{
-        std::make_shared<DetectionItem>(std::move(detectionItem))};
-    registerDetection(detectionItemPtr);
-
-    // TODO(damb): send message to amp-mag worker which computes the
-    // amplitudes and magnitudes.
-  } else {
-    publishDetection(detectionItem);
-  }
-}
-
-void Application::publishDetection(
-    const std::shared_ptr<DetectionItem> &detection) {
-  if (!detection->published) {
-    publishDetection(*detection);
-
-    detection->published = true;
-  }
-}
-
-void Application::publishDetection(const DetectionItem &detectionItem) {
-  logObject(_outputOrigins, Core::Time::GMT());
-
-  if (connection() && !_config.noPublish) {
-    SCDETECT_LOG_DEBUG_TAGGED(detectionItem.detectorId,
-                              "Sending event parameters (detection) ...");
-
-    auto notifierMsg{util::make_smart<DataModel::NotifierMessage>()};
-
-    // origin
-    auto notifier{util::make_smart<DataModel::Notifier>(
-        "EventParameters", DataModel::OP_ADD, detectionItem.origin.get())};
-    notifierMsg->attach(notifier.get());
-
-    // comments
-    for (std::size_t i{0}; i < detectionItem.origin->commentCount(); ++i) {
-      auto notifier{util::make_smart<DataModel::Notifier>(
-          detectionItem.origin->publicID(), DataModel::OP_ADD,
-          detectionItem.origin->comment(i))};
-
-      notifierMsg->attach(notifier.get());
-    }
-
-    for (auto &arrivalPick : detectionItem.arrivalPicks) {
-      // pick
-      {
-        auto notifier{util::make_smart<DataModel::Notifier>(
-            "EventParameters", DataModel::OP_ADD, arrivalPick.pick.get())};
-
-        notifierMsg->attach(notifier.get());
-      }
-      // arrival
-      {
-        auto notifier{util::make_smart<DataModel::Notifier>(
-            detectionItem.origin->publicID(), DataModel::OP_ADD,
-            arrivalPick.arrival.get())};
-
-        notifierMsg->attach(notifier.get());
-      }
-    }
-
-    // station magnitudes
-    for (auto &mag : detectionItem.magnitudes) {
-      auto notifier{util::make_smart<DataModel::Notifier>(
-          detectionItem.origin->publicID(), DataModel::OP_ADD, mag.get())};
-
-      notifierMsg->attach(notifier.get());
-    }
-
-    // network magnitudes
-    for (auto &mag : detectionItem.networkMagnitudes) {
-      auto notifier{util::make_smart<DataModel::Notifier>(
-          detectionItem.origin->publicID(), DataModel::OP_ADD, mag.get())};
-
-      notifierMsg->attach(notifier.get());
-      // station magnitude contributions
-      for (std::size_t i{0}; i < mag->stationMagnitudeContributionCount();
-           ++i) {
-        auto notifier{util::make_smart<DataModel::Notifier>(
-            mag->publicID(), DataModel::OP_ADD,
-            mag->stationMagnitudeContribution(i))};
-        notifierMsg->attach(notifier.get());
-      }
-    }
-
-    if (!connection()->send(notifierMsg.get())) {
-      SCDETECT_LOG_ERROR_TAGGED(
-          detectionItem.detectorId,
-          "Sending of event parameters (detection) failed.");
-    }
-  }
-
-  if (_ep) {
-    _ep->add(detectionItem.origin.get());
-
-    for (auto &arrivalPick : detectionItem.arrivalPicks) {
-      detectionItem.origin->add(arrivalPick.arrival.get());
-
-      _ep->add(arrivalPick.pick.get());
-    }
-
-    // station magnitudes
-    for (auto &mag : detectionItem.magnitudes) {
-      detectionItem.origin->add(mag.get());
-    }
-
-    // network magnitudes
-    for (auto &mag : detectionItem.networkMagnitudes) {
-      detectionItem.origin->add(mag.get());
-    }
-  }
-
-  // amplitudes
-  for (auto &ampPair : detectionItem.amplitudes) {
-    if (!ampPair.second) {
-      continue;
-    }
-
-    logObject(_outputAmplitudes, Core::Time::GMT());
-    if (connection() && !_config.noPublish) {
-      SCDETECT_LOG_DEBUG_TAGGED(detectionItem.detectorId,
-                                "Sending event parameters (amplitude) ...");
-
-      auto notifierMsg{util::make_smart<DataModel::NotifierMessage>()};
-
-      auto notifier{util::make_smart<DataModel::Notifier>(
-          "EventParameters", DataModel::OP_ADD, ampPair.second.get())};
-      notifierMsg->attach(notifier.get());
-
-      if (!connection()->send(_config.amplitudeMessagingGroup,
-                              notifierMsg.get())) {
-        SCDETECT_LOG_ERROR_TAGGED(
-            detectionItem.detectorId,
-            "Sending of event parameters (amplitude) failed.");
-      }
-    }
-
-    if (_ep) {
-      _ep->add(ampPair.second.get());
-    }
-  }
 }
 
 bool Application::isEventDatabaseEnabled() const {
@@ -1036,78 +688,19 @@ void Application::shutdownDetectorWorkers() {
   }
 }
 
-void Application::publishAndRemoveDetection(
-    std::shared_ptr<DetectionItem> &detection) {
-  publishDetection(detection);
-  removeDetection(detection);
-}
+/* std::unique_ptr<DataModel::Comment> */
+/* Application::createTemplateWaveformTimeInfoComment( */
+/*     const detector::Detector::Detection::TemplateResult &templateResult) { */
+/*   auto ret{util::make_unique<DataModel::Comment>()}; */
+/*   ret->setId(settings::kTemplateWaveformTimeInfoPickCommentId); */
+/*   ret->setText(templateResult.templateWaveformStartTime.iso() + */
+/*                settings::kTemplateWaveformTimeInfoPickCommentIdSep + */
+/*                templateResult.templateWaveformEndTime.iso() + */
+/*                settings::kTemplateWaveformTimeInfoPickCommentIdSep + */
+/*                templateResult.templateWaveformReferenceTime.iso()); */
 
-void Application::registerDetection(
-    const std::shared_ptr<DetectionItem> &detection) {
-  if (_detectionRegistrationBlocked) {
-    _detectionQueue.emplace_back(detection);
-    return;
-  }
-
-  const auto &waveformStreamIds{
-      util::map_keys(detection->detection->templateResults)};
-
-  for (const auto &waveformStreamId : waveformStreamIds) {
-    _detections.emplace(waveformStreamId, detection);
-    SCDETECT_LOG_DEBUG("[%s] Added detection: id=\"%s\"",
-                       waveformStreamId.c_str(), detection->id().c_str());
-    SCDETECT_LOG_DEBUG("Current detection count: %lu", _detections.size());
-  }
-}
-
-void Application::removeDetection(
-    const std::shared_ptr<DetectionItem> &detection) {
-  if (_detectionRegistrationBlocked) {
-    _detectionRemovalQueue.emplace_back(detection);
-    return;
-  }
-
-  const auto waveformStreamIds{
-      util::map_keys(detection->detection->templateResults)};
-  for (const auto &waveformStreamId : waveformStreamIds) {
-    auto range{_detections.equal_range(waveformStreamId)};
-    auto it{range.first};
-    while (it != range.second) {
-      if (it->second == detection) {
-        SCDETECT_LOG_DEBUG("[%s] Removed detection: id=\"%s\"",
-                           waveformStreamId.c_str(), detection->id().c_str());
-        it = _detections.erase(it);
-        SCDETECT_LOG_DEBUG("Current detection count: %lu", _detections.size());
-      } else {
-        ++it;
-      }
-    }
-  }
-
-  // check pending registration queue
-  auto it{std::begin(_detectionQueue)};
-  while (it != _detectionQueue.end()) {
-    if (*it == detection) {
-      it = _detectionQueue.erase(it);
-      continue;
-    }
-    ++it;
-  }
-}
-
-std::unique_ptr<DataModel::Comment>
-Application::createTemplateWaveformTimeInfoComment(
-    const detector::Detector::Detection::TemplateResult &templateResult) {
-  auto ret{util::make_unique<DataModel::Comment>()};
-  ret->setId(settings::kTemplateWaveformTimeInfoPickCommentId);
-  ret->setText(templateResult.templateWaveformStartTime.iso() +
-               settings::kTemplateWaveformTimeInfoPickCommentIdSep +
-               templateResult.templateWaveformEndTime.iso() +
-               settings::kTemplateWaveformTimeInfoPickCommentIdSep +
-               templateResult.templateWaveformReferenceTime.iso());
-
-  return ret;
-}
+/*   return ret; */
+/* } */
 
 Application::Config::Config() {
   Environment *env{Environment::Instance()};

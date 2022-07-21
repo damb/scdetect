@@ -299,20 +299,6 @@ class Application : public Client::StreamApplication {
   bool startDetectorWorkerThreads();
   void shutdownDetectorWorkers();
 
-  // Registers a detection
-  void registerDetection(const std::shared_ptr<DetectionItem> &detection);
-  // Removes a detection
-  void removeDetection(const std::shared_ptr<DetectionItem> &detection);
-
-  void processDetection(
-      const detector::Detector *processor, const Record *record,
-      std::unique_ptr<const detector::Detector::Detection> detection);
-
-  void publishDetection(const std::shared_ptr<DetectionItem> &detection);
-  void publishDetection(const DetectionItem &detectionItem);
-
-  void publishAndRemoveDetection(std::shared_ptr<DetectionItem> &detection);
-
   Config _config;
   binding::Bindings _bindings;
 
@@ -325,17 +311,6 @@ class Application : public Client::StreamApplication {
   DetectorWorkerIdx _detectorWorkerIdx;
 
   std::vector<std::thread> _detectorWorkerThreads;
-
-  using Detections =
-      std::unordered_multimap<WaveformStreamId, std::shared_ptr<DetectionItem>>;
-  Detections _detections;
-
-  using DetectionQueue = std::list<std::shared_ptr<DetectionItem>>;
-  // The queue used for detection registration
-  DetectionQueue _detectionQueue;
-  // The queue used for detection removal
-  DetectionQueue _detectionRemovalQueue;
-  bool _detectionRegistrationBlocked{false};
 };
 
 }  // namespace detect
