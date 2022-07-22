@@ -30,7 +30,7 @@
 
 #include "binding.h"
 #include "config/detector.h"
-#include "config/template_family.h"
+//#include "config/template_family.h"
 #include "detector/detector.h"
 #include "exception.h"
 #include "settings.h"
@@ -169,8 +169,8 @@ class Application : public Client::StreamApplication {
 
     config::StreamConfig streamConfig;
 
-    config::TemplateFamilyConfig::ReferenceConfig::SensorLocationConfig
-        templateFamilySensorLocationConfig;
+    /* config::TemplateFamilyConfig::ReferenceConfig::SensorLocationConfig */
+    /*     templateFamilySensorLocationConfig; */
 
     // binding default configurations
     binding::SensorLocationConfig sensorLocationBindings;
