@@ -2,14 +2,6 @@ set(DETECT_TARGET scdetect-cc)
 
 set(
   DETECT_SOURCES
-    amplitude/factory.cpp
-    amplitude/ratio.cpp
-    amplitude/mlx.cpp
-    amplitude/mrelative.cpp
-    amplitude/rms.cpp
-    amplitude/util.cpp
-    amplitude_processor.cpp
-    combining_amplitude_processor.cpp
     app.cpp
     binding.cpp
     config/detector.cpp
@@ -19,41 +11,38 @@ set(
     datamodel/ddl.cpp
     detail/sqlite.cpp
     detector/arrival.cpp
-    detector/detector_impl.cpp
     detector/detector.cpp
+    detector/exception.cpp
+    detector/detection_processor.cpp
+    detector/detection_candidate_processor.cpp
+    detector/detection_candidate.cpp
+    detector/linker.cpp
+    detector/linker/exception.cpp
     detector/linker/association.cpp
     detector/linker/pot.cpp
-    detector/linker.cpp
-    detector/template_waveform_processor.cpp
+    detector/template_processor.cpp
+    detector/template_processor/buffer.cpp
+    detector/template_processor/state_machine.cpp
     eventstore.cpp
     exception.cpp
     filter.cpp
     log.cpp
-    magnitude_processor.cpp
-    magnitude/decorator/range.cpp
-    magnitude/decorator.cpp
-    magnitude/factory.cpp
-    magnitude/mlx.cpp
-    magnitude/mrelative.cpp
-    magnitude/util.cpp
-    magnitude/template_family.cpp
     main.cpp
-    operator/resample.cpp
-    operator/ringbuffer.cpp
     processing/detail/gap_interpolate.cpp
     processing/processor.cpp
     processing/stream.cpp
-    processing/timewindow_processor.cpp
-    processing/waveform_operator.cpp
-    processing/waveform_processor.cpp
     resamplerstore.cpp
     template_waveform.cpp
-    template_family.cpp
     util/filter.cpp
     util/horizontal_components.cpp
     util/util.cpp
     util/waveform_stream_id.cpp
     waveform.cpp
+    worker.cpp
+    worker/exception.cpp
+    worker/recordstream.cpp
+    worker/detector_worker.cpp
+    worker/event/command.cpp
 )
 
 
