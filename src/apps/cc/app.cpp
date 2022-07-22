@@ -630,13 +630,6 @@ std::vector<std::unique_ptr<Detector>> Application::createDetectors(
           continue;
         }
 
-        detector->setResultCallback(
-            [this](const Detector *detector, const Record *record,
-                   std::unique_ptr<const Detector::Detection> detection) {
-              // TODO(damb): implement callback
-              // processDetection(detector, record, std::move(detection));
-            });
-
         ret.emplace_back(std::move(detector));
 
       } catch (Exception &e) {
