@@ -53,6 +53,7 @@ class Builder {
   Builder() = default;
   Builder(Builder &&other) = default;
   Builder &operator=(Builder &&other) = default;
+  virtual ~Builder() = default;
 
   virtual std::unique_ptr<TProduct> build();
 
