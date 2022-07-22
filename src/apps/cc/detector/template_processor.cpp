@@ -38,6 +38,10 @@ void TemplateProcessor::setFilter(
                            templateWaveform().configuredStartTime());
 }
 
+boost::optional<Core::TimeSpan> TemplateProcessor::initTime() const {
+  return _initTime;
+}
+
 const Detector* TemplateProcessor::parent() const { return _parent; }
 
 const TemplateProcessor::StreamState& TemplateProcessor::streamState() const {
@@ -61,6 +65,11 @@ const Core::TimeSpan& TemplateProcessor::configuredBufferSize() const {
 void TemplateProcessor::setConfiguredBufferSize(
     const Core::TimeSpan& duration) {
   _buffer.setConfiguredBufferSize(duration);
+}
+
+bool TemplateProcessor::fill(processing::StreamState& streamState,
+                             const Record* record, DoubleArrayPtr& data) {
+  return _buffer.feed(record->timeWindow(), data);
 }
 
 TemplateProcessor::EventHandler::EventHandler(TemplateProcessor* processor)
