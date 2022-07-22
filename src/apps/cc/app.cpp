@@ -36,8 +36,6 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
-#include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -422,7 +420,7 @@ void Application::done() {
   StreamApplication::done();
 }
 
-bool dispatchNotification(int type, Core::BaseObject *obj) {
+bool Application::dispatchNotification(int type, Core::BaseObject *obj) {
   using WorkerNotificationType = WorkerNotification::Type;
   if (type < static_cast<int>(WorkerNotificationType::kDetection)) {
     assert(obj);
@@ -547,7 +545,7 @@ bool Application::initDetectorWorkers(std::ifstream &ifs,
   // TODO(damb): perform load balancing; currently all detectors are handled
   // by a single `DetectorWorker`
 
-  auto worker{util::make_shared<DetectorWorker>(
+  auto worker{std::make_shared<DetectorWorker>(
       worker::RecordStream{recordStreamURL()}, std::move(detectors))};
 
   _detectorWorkers.emplace_back(worker);
@@ -555,8 +553,9 @@ bool Application::initDetectorWorkers(std::ifstream &ifs,
   return !_detectorWorkers.empty();
 }
 
-std::vector<std::unique_ptr<Detector>> Application::createDetectors(
-    std::ifstream &ifs, WaveformHandlerIface *waveformHandler) {
+std::vector<std::unique_ptr<Application::Detector>>
+Application::createDetectors(std::ifstream &ifs,
+                             WaveformHandlerIface *waveformHandler) {
   std::vector<std::unique_ptr<Detector>> ret;
   try {
     boost::property_tree::ptree pt;
@@ -593,7 +592,7 @@ std::vector<std::unique_ptr<Detector>> Application::createDetectors(
               continue;
             }
             throw ConfigError{"failed to create template processor: " +
-                              e.what()};
+                              std::string{e.what()}};
           } catch (builder::NoStream &e) {
             if (_config.skipTemplateIfNoStreamData) {
               SCDETECT_LOG_WARNING(
@@ -601,7 +600,7 @@ std::vector<std::unique_ptr<Detector>> Application::createDetectors(
               continue;
             }
             throw ConfigError{"failed to create template processor: " +
-                              e.what()};
+                              std::string{e.what()}};
           } catch (builder::NoPick &e) {
             if (_config.skipTemplateIfNoPick) {
               SCDETECT_LOG_WARNING(
@@ -609,7 +608,7 @@ std::vector<std::unique_ptr<Detector>> Application::createDetectors(
               continue;
             }
             throw ConfigError{"failed to create template processor: " +
-                              e.what()};
+                              std::string{e.what()}};
           } catch (builder::NoWaveformData &e) {
             if (_config.skipTemplateIfNoWaveformData) {
               SCDETECT_LOG_WARNING(
@@ -617,7 +616,7 @@ std::vector<std::unique_ptr<Detector>> Application::createDetectors(
               continue;
             }
             throw ConfigError{"failed to create template processor: " +
-                              e.what()};
+                              std::string{e.what()}};
           }
           waveformStreamIds.push_back(streamConfigPair.first);
         }
@@ -656,17 +655,18 @@ std::vector<std::unique_ptr<Detector>> Application::createDetectors(
 
 bool Application::startDetectorWorkerThreads() {
   for (auto &worker : _detectorWorkers) {
-    _detectorWorkerThreads.emplace_back(std::thread{[worker]() { *worker(); }});
+    _detectorWorkerThreads.emplace_back(
+        std::thread{[worker]() { worker->exec(); }});
   }
 
   return true;
 }
 
 void Application::shutdownDetectorWorkers() {
+  using WorkerCommand = worker::event::Command;
   // shutdown detector workers
   for (auto &w : _detectorWorkers) {
-    w->postEvent(
-        worker::event::Command{worker::event::Command::Type::kShutdown});
+    w->postEvent(WorkerCommand{WorkerCommand::Type::kShutdown});
   }
 
   for (auto &t : _detectorWorkerThreads) {

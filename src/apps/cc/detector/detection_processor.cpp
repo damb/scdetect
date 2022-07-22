@@ -69,7 +69,9 @@ std::unique_ptr<Detection> DetectionProcessor::operator()(
       util::cma(alignedArrivalOffsets.data(), alignedArrivalOffsets.size())};
   const auto &referenceOriginArrivalOffset{referenceArrival.pick.offset};
 
-  auto ret{util::make_unique<Detection>(contributionInfos, publishConfig)};
+  auto ret{util::make_unique<Detection>()};
+  ret->contributionInfos = contributionInfos;
+  ret->publishConfig = publishConfig;
 
   ret->origin.time = referenceStartTime + Core::TimeSpan{referenceLag} -
                      referenceOriginArrivalOffset +

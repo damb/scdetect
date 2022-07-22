@@ -11,12 +11,11 @@
 #include "../worker.h"
 #include "event/command.h"
 #include "recordstream.h"
-#include "seiscomp/client/application.h"
 
 namespace Seiscomp {
 namespace Client {
 
-class Notification;
+struct Notification;
 
 }
 
