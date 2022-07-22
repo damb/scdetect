@@ -59,6 +59,16 @@ void DetectionCandidateProcessor::setOnTriggeredCallback(
   _onTriggeredCallback = std::move(callback);
 }
 
+void DetectionCandidateProcessor::setProcessDetectionCallback(
+    ProcessDetectionCallback callback) {
+  _processDetectionCallback = std::move(callback);
+}
+
+void DetectionCandidateProcessor::setEmitDetectionCallback(
+    EmitDetectionCallback callback) {
+  _emitDetectionCallback = std::move(callback);
+}
+
 void DetectionCandidateProcessor::processCandidate(
     DetectionCandidate &&candidate) {
   const auto triggerOnThreshold{_triggerOnThreshold.value_or(-1)};
@@ -161,6 +171,13 @@ void DetectionCandidateProcessor::processCandidate(
 void DetectionCandidateProcessor::resetTrigger() {
   _triggerProcId = boost::none;
   _triggerEnd = boost::none;
+}
+
+void DetectionCandidateProcessor::emitDetection(
+    std::unique_ptr<Detection> detection) {
+  if (_emitDetectionCallback) {
+    _emitDetectionCallback(std::move(detection));
+  }
 }
 
 }  // namespace detector
