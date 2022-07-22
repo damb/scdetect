@@ -1,5 +1,7 @@
 #include "linker.h"
 
+#include <seiscomp/core/datetime.h>
+
 #include <algorithm>
 #include <cassert>
 #include <iterator>
@@ -14,6 +16,8 @@
 namespace Seiscomp {
 namespace detect {
 namespace detector {
+
+const Core::TimeSpan Linker::DefaultSafetyMargin{Core::TimeSpan{1.0}};
 
 Linker::Linker(const Core::TimeSpan &onHold,
                const Core::TimeSpan &arrivalOffsetThres)
