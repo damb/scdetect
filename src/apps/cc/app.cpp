@@ -33,6 +33,7 @@
 #include <ios>
 #include <iterator>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -47,6 +48,7 @@
 #include "detector/detector.h"
 #include "eventstore.h"
 #include "log.h"
+#include "notification.h"
 #include "processing/processor.h"
 #include "resamplerstore.h"
 #include "util/memory.h"
@@ -547,6 +549,10 @@ bool Application::initDetectorWorkers(std::ifstream &ifs,
 
   auto worker{std::make_shared<DetectorWorker>(
       worker::RecordStream{recordStreamURL()}, std::move(detectors))};
+
+  // configure notification callback
+  worker->setEmitApplicationNotificationCallback(
+      [this](const Client::Notification &n) { sendNotification(n); });
 
   _detectorWorkers.emplace_back(worker);
 

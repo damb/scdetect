@@ -2,6 +2,7 @@
 #define SCDETECT_APPS_CC_APP_H_
 
 #include <seiscomp/client/streamapplication.h>
+#include <seiscomp/core/baseobject.h>
 #include <seiscomp/datamodel/amplitude.h>
 #include <seiscomp/datamodel/eventparameters.h>
 #include <seiscomp/datamodel/magnitude.h>
@@ -178,6 +179,9 @@ class Application : public Client::StreamApplication {
   bool init() override;
   bool run() override;
   void done() override;
+
+  // Dispatches custom worker notifications
+  bool dispatchNotification(int type, Core::BaseObject *obj) override;
 
   void handleRecord(Record *rec) override;
 

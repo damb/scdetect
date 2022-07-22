@@ -37,8 +37,11 @@ void DetectorWorker::setEmitApplicationNotificationCallback(
 }
 
 bool DetectorWorker::init() {
-  emitApplicationNotification(Client::Notification{
-      static_cast<int>(WorkerNotification::kInitializing)});
+  {
+    emitApplicationNotification(Client::Notification{
+        static_cast<int>(WorkerNotification::Type::kInitializing),
+        new WorkerNotification{}});
+  }
 
   for (std::size_t i{0}; i < _detectors.size(); ++i) {
     auto& detector{_detectors[i]};
@@ -64,15 +67,19 @@ bool DetectorWorker::init() {
 
   _recordStream.setOnAquisitionFinished([this]() { onAquisitionFinished(); });
 
-  emitApplicationNotification(
-      Client::Notification{static_cast<int>(WorkerNotification::kInitialized)});
+  {
+    emitApplicationNotification(Client::Notification{
+        static_cast<int>(WorkerNotification::Type::kInitialized),
+        new WorkerNotification{}});
+  }
 
   return true;
 }
 
 void DetectorWorker::run() {
   emitApplicationNotification(
-      Client::Notification{static_cast<int>(WorkerNotification::kRunning)});
+      Client::Notification{static_cast<int>(WorkerNotification::Type::kRunning),
+                           new WorkerNotification{}});
 
   // event loop
   while (!_exitRequested) {
@@ -87,8 +94,9 @@ void DetectorWorker::run() {
 }
 
 void DetectorWorker::done() {
-  emitApplicationNotification(
-      Client::Notification{static_cast<int>(WorkerNotification::kTerminating)});
+  emitApplicationNotification(Client::Notification{
+      static_cast<int>(WorkerNotification::Type::kTerminating),
+      new WorkerNotification{}});
 
   Worker::done();
 
@@ -200,8 +208,8 @@ void DetectorWorker::storeDetection(
     const Detector* detector, std::unique_ptr<Detector::Detection> detection) {
   // TODO TODO TODO
   // - attach detection to Application Notification
-  emitApplicationNotification(
-      Client::Notification{static_cast<int>(WorkerNotification::kDetection)});
+  emitApplicationNotification(Client::Notification{
+      static_cast<int>(WorkerNotification::Type::kDetection)});
 }
 
 bool DetectorWorker::storeRecord(std::unique_ptr<Record> record) {
@@ -213,8 +221,9 @@ bool DetectorWorker::storeRecord(std::unique_ptr<Record> record) {
 }
 
 void DetectorWorker::onAquisitionFinished() {
-  emitApplicationNotification(
-      Client::Notification{static_cast<int>(WorkerNotification::kFinished)});
+  emitApplicationNotification(Client::Notification{
+      static_cast<int>(WorkerNotification::Type::kFinished),
+      new WorkerNotification{}});
 }
 
 void DetectorWorker::sleep_or_yield() {
