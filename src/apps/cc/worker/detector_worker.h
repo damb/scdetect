@@ -76,21 +76,46 @@ class DetectorWorker : public Worker {
 
   friend EventHandler;
 
+  struct DetectorEventHandler {
+    explicit DetectorEventHandler(DetectorWorker* worker);
+    void operator()(detector::event::Link&& ev);
+
+    template <typename TDetectorEvent>
+    void operator()(TDetectorEvent&& ev) {
+      boost::variant2::visit(InternalEventHandler{worker},
+                             std::forward<TDetectorEvent>(ev));
+    }
+
+    DetectorWorker* worker;
+  };
+
+  friend DetectorEventHandler;
+
   struct InternalEventHandler {
     explicit InternalEventHandler(DetectorWorker* worker);
     void operator()(detector::event::Record&& ev);
 
     template <typename TInternalEvent>
     void operator()(TInternalEvent&& ev) {
+      const auto& detectorId{boost::variant2::visit(DetectorIdExtractor{}, ev)};
       // XXX(damb): no bounds checking
-      worker->_detectors[worker->_detectorIdIdx[ev.detectorId]]->dispatch(
-          std::forward(ev));
+      worker->_detectors[worker->_detectorIdIdx[detectorId]]->dispatch(
+          std::forward<TInternalEvent>(ev));
     }
 
     DetectorWorker* worker;
   };
 
   friend InternalEventHandler;
+
+  struct DetectorIdExtractor {
+    DetectorId operator()(const detector::event::Record& ev);
+
+    template <typename TInternalEvent>
+    DetectorId operator()(const TInternalEvent& ev) {
+      return ev.detectorId;
+    }
+  };
 
   void initDetectorIdx(
       const Detector& detector, std::size_t idx,
@@ -101,7 +126,7 @@ class DetectorWorker : public Worker {
 
   void handleCommand(const event::Command& ev);
 
-  void dispatchRecord(const detector::event::Record& ev);
+  void dispatch(detector::event::Record&& ev);
 
   void storeDetectorEvent(Detector::Event&& ev);
   void storeDetection(const Detector* detector,

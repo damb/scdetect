@@ -4,6 +4,7 @@
 #include <memory>
 
 #include "../def.h"
+#include "detector.h"
 #include "template_processor/state_machine.h"
 
 namespace Seiscomp {
@@ -25,8 +26,8 @@ void TemplateProcessor::reset() {
   _status = Status::kWaitingForData;
 }
 
-void TemplateProcessor::dispatch(Event& ev) {
-  boost::variant2::visit(EventHandler{this}, ev);
+void TemplateProcessor::dispatch(Event&& ev) {
+  boost::variant2::visit(EventHandler{this}, std::move(ev));
 }
 
 void TemplateProcessor::setFilter(
@@ -75,77 +76,14 @@ bool TemplateProcessor::fill(processing::StreamState& streamState,
 TemplateProcessor::EventHandler::EventHandler(TemplateProcessor* processor)
     : processor{processor} {}
 
-void TemplateProcessor::EventHandler::operator()(const event::Record& ev) {
-  if (processor->status() > Status::kWaitingForData ||
-      !static_cast<bool>(ev.record->data())) {
-    return;
+void TemplateProcessor::EventHandler::operator()(event::Record&& ev) {
+  if (!processor->feed(ev.record.get())) {
+    processor->setStatus(Status::kError);
   }
-
-  DoubleArrayPtr data{
-      dynamic_cast<DoubleArray*>(ev.record->data()->copy(Array::DOUBLE))};
-
-  auto& streamState{processor->_streamState};
-  if (streamState.lastRecord) {
-    if (ev.record == streamState.lastRecord) {
-      return;
-    } else if (ev.record->samplingFrequency() !=
-               streamState.samplingFrequency) {
-      SCDETECT_LOG_WARNING_PROCESSOR(
-          processor,
-          "%s: sampling frequency changed, resetting stream (sfreq_record != "
-          "sfreq_stream): %f != %f",
-          ev.record->streamID().c_str(), ev.record->samplingFrequency(),
-          streamState.samplingFrequency);
-
-      // flush buffer and buffer this record with the new sampling frequency
-      flushBuffer(streamState);
-      processor->_buffer.feed(ev.record->timeWindow(), data);
-      reset(streamState);
-    } else if (!processor->handleGap(streamState, ev.record.get(), data)) {
-      return;
-    }
-
-    streamState.dataTimeWindow.setEndTime(ev.record->endTime());
-  }
-
-  if (!streamState.lastRecord) {
-    try {
-      processor->setupStream(ev.record.get());
-    } catch (std::exception& e) {
-      SCDETECT_LOG_WARNING_PROCESSOR(processor,
-                                     "%s: Failed to setup stream: %s",
-                                     ev.record->streamID().c_str(), e.what());
-      return;
-    }
-  }
-
-  streamState.lastSample = (*data)[data->size() - 1];
-
-  processor->_buffer.feed(ev.record->timeWindow(), data);
-  if (processor->_buffer.full()) {
-    flushBuffer(streamState);
-  }
-
-  processor->tryToRunNextStateMachine();
-
-  // TODO(damb):
-  // - feed to resampler; note that resampling cannot be treated as a separate
-  // event, however, it may be offloaded to an executor
 }
 
-void TemplateProcessor::EventHandler::operator()(InternalEvent& ev) {
-  boost::variant2::visit(InternalEventHandler{processor}, ev);
-}
-
-void TemplateProcessor::EventHandler::flushBuffer(
-    const StreamState& streamState) {
-  auto bufferedRecord{processor->_buffer.contiguousRecord<double>(
-      streamState.lastRecord->networkCode(),
-      streamState.lastRecord->stationCode(),
-      streamState.lastRecord->locationCode(),
-      streamState.lastRecord->channelCode(), streamState.samplingFrequency)};
-  processor->store(bufferedRecord.release());
-  processor->_buffer.reset();
+void TemplateProcessor::EventHandler::operator()(InternalEvent&& ev) {
+  boost::variant2::visit(InternalEventHandler{processor}, std::move(ev));
 }
 
 TemplateProcessor::InternalEventHandler::InternalEventHandler(
@@ -154,7 +92,7 @@ TemplateProcessor::InternalEventHandler::InternalEventHandler(
 
 /* void operator()(event::Resample& ev); */
 
-void TemplateProcessor::InternalEventHandler::operator()(event::Filter& ev) {
+void TemplateProcessor::InternalEventHandler::operator()(event::Filter&& ev) {
   assert(processor);
   ev.filter = processor->_streamState.filter.get();
 
@@ -162,17 +100,17 @@ void TemplateProcessor::InternalEventHandler::operator()(event::Filter& ev) {
 }
 
 void TemplateProcessor::InternalEventHandler::operator()(
-    event::CrossCorrelate& ev) {
+    event::CrossCorrelate&& ev) {
   assert(processor);
   ev.filter = &processor->_crossCorrelation;
   processor->_stateMachines.front().dispatch(ev);
 }
 
-void TemplateProcessor::InternalEventHandler::operator()(event::Process& ev) {
+void TemplateProcessor::InternalEventHandler::operator()(event::Process&& ev) {
   processor->_stateMachines.front().dispatch(ev);
 }
 
-void TemplateProcessor::InternalEventHandler::operator()(event::Finished& ev) {
+void TemplateProcessor::InternalEventHandler::operator()(event::Finished&& ev) {
   if (!processor->_streamState.initialized) {
     processor->_streamState.initialized = ev.initialized;
   }
@@ -211,6 +149,75 @@ void TemplateProcessor::reset(StreamState& streamState) {
   if (tmp) {
     streamState.filter.reset(tmp->clone());
   }
+}
+
+void TemplateProcessor::setStatus(Status status) { _status = status; }
+
+bool TemplateProcessor::feed(const Record* record) {
+  if (status() > Status::kWaitingForData ||
+      !static_cast<bool>(record->data())) {
+    return false;
+  }
+
+  DoubleArrayPtr data{
+      dynamic_cast<DoubleArray*>(record->data()->copy(Array::DOUBLE))};
+
+  if (_streamState.lastRecord) {
+    if (record == _streamState.lastRecord) {
+      return false;
+    } else if (record->samplingFrequency() != _streamState.samplingFrequency) {
+      SCDETECT_LOG_WARNING_PROCESSOR(
+          this,
+          "%s: sampling frequency changed, resetting stream (sfreq_record != "
+          "sfreq_stream): %f != %f",
+          record->streamID().c_str(), record->samplingFrequency(),
+          _streamState.samplingFrequency);
+
+      // flush buffer and buffer this record with the new sampling frequency
+      flushBuffer();
+      reset(_streamState);
+      fill(_streamState, record, data);
+    } else if (!handleGap(_streamState, record, data)) {
+      return false;
+    }
+
+    _streamState.dataTimeWindow.setEndTime(record->endTime());
+  }
+
+  if (!_streamState.lastRecord) {
+    try {
+      setupStream(record);
+    } catch (std::exception& e) {
+      SCDETECT_LOG_WARNING_PROCESSOR(this, "%s: Failed to setup stream: %s",
+                                     record->streamID().c_str(), e.what());
+      return false;
+    }
+  }
+
+  _streamState.lastSample = (*data)[data->size() - 1];
+
+  fill(_streamState, record, data);
+  if (_buffer.full()) {
+    flushBuffer();
+  }
+
+  tryToRunNextStateMachine();
+
+  // TODO(damb):
+  // - feed to resampler; note that resampling cannot be treated as a separate
+  // event, however, it may be offloaded to an executor
+
+  return true;
+}
+
+void TemplateProcessor::flushBuffer() {
+  auto bufferedRecord{_buffer.contiguousRecord<double>(
+      _streamState.lastRecord->networkCode(),
+      _streamState.lastRecord->stationCode(),
+      _streamState.lastRecord->locationCode(),
+      _streamState.lastRecord->channelCode(), _streamState.samplingFrequency)};
+  store(bufferedRecord.release());
+  _buffer.reset();
 }
 
 bool TemplateProcessor::store(const Record* record) {

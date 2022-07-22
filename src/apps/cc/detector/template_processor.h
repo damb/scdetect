@@ -31,10 +31,9 @@ class Detector;
 // - Implements gap interpolation facilities
 class TemplateProcessor : public processing::Processor,
                           public processing::detail::InterpolateGaps {
-  using InternalEvent = template_processor::StateMachine::Event;
-
  public:
   using Filter = DoubleFilter;
+  using InternalEvent = template_processor::StateMachine::Event;
   using Event = boost::variant2::variant<event::Record, InternalEvent>;
 
   enum class Status {
@@ -71,7 +70,7 @@ class TemplateProcessor : public processing::Processor,
   // Resets the `TemplateProcessor`
   void reset();
 
-  void dispatch(Event& ev);
+  void dispatch(Event&& ev);
 
   // Sets `filter` with the corresponding filter `initTime`
   void setFilter(std::unique_ptr<DoubleFilter> filter,
@@ -99,14 +98,10 @@ class TemplateProcessor : public processing::Processor,
             DoubleArrayPtr& data) override;
 
  private:
-  class EventHandler {
-   public:
+  struct EventHandler {
     explicit EventHandler(TemplateProcessor* processor);
-    void operator()(const event::Record& ev);
-    void operator()(InternalEvent& ev);
-
-   private:
-    void flushBuffer(const StreamState& streamState);
+    void operator()(event::Record&& ev);
+    void operator()(InternalEvent&& ev);
 
     TemplateProcessor* processor{nullptr};
   };
@@ -116,13 +111,13 @@ class TemplateProcessor : public processing::Processor,
   struct InternalEventHandler {
     explicit InternalEventHandler(TemplateProcessor* processor);
     /* void operator()(event::Resample& ev); */
-    void operator()(event::Filter& ev);
-    void operator()(event::CrossCorrelate& ev);
-    void operator()(event::Process& ev);
-    void operator()(event::Finished& ev);
+    void operator()(event::Filter&& ev);
+    void operator()(event::CrossCorrelate&& ev);
+    void operator()(event::Process&& ev);
+    void operator()(event::Finished&& ev);
 
     template <typename TEvent>
-    void operator()(TEvent& ev) {}
+    void operator()(TEvent&& ev) {}
 
     TemplateProcessor* processor{nullptr};
   };
@@ -153,6 +148,11 @@ class TemplateProcessor : public processing::Processor,
 
   // Set the processor's status
   void setStatus(Status status);
+
+  // Feeds `record` to the processor
+  bool feed(const Record* record);
+
+  void flushBuffer();
 
   // Creates a new `StateMachine` for each record fed
   bool store(const Record* record);

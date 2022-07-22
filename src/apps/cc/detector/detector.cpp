@@ -466,7 +466,7 @@ void Detector::terminate() {
 }
 
 void Detector::dispatch(Event &&ev) {
-  boost::variant2::visit(EventHandler{this}, ev);
+  boost::variant2::visit(EventHandler{this}, std::move(ev));
 }
 
 void Detector::postEvent(Event &&ev) const {
@@ -542,20 +542,16 @@ const boost::optional<Core::TimeSpan> &Detector::maxLatency() const {
 
 Detector::EventHandler::EventHandler(Detector *detector) : detector{detector} {}
 
-void Detector::EventHandler::operator()(event::Link &ev) {
+void Detector::EventHandler::operator()(event::Link &&ev) {
   detector->link(ev.templateProcessorId, std::move(ev.matchResult));
 }
 
-void Detector::EventHandler::operator()(InternalEvent &ev) {
-  boost::variant2::visit(InternalEventHandler{detector}, ev);
+void Detector::EventHandler::operator()(InternalEvent &&ev) {
+  boost::variant2::visit(InternalEventHandler{detector}, std::move(ev));
 }
 
 Detector::InternalEventHandler::InternalEventHandler(Detector *detector)
     : detector{detector} {}
-
-void Detector::InternalEventHandler::operator()(const event::Record &ev) {
-  detector->dispatchRecord(ev.record.get());
-}
 
 void Detector::registerTemplateProcessor(
     TemplateProcessor &&templateProcessor,
@@ -635,13 +631,16 @@ void Detector::link(const detail::ProcessorIdType &templateProcessorId,
   event::Finished finished;
   finished.initialized = true;
   TemplateProcessor::Event nextEvent{finished};
-  templateProcessor.dispatch(nextEvent);
+  templateProcessor.dispatch(std::move(nextEvent));
 }
 
-void Detector::dispatchRecord(const Record *record) {
+void Detector::dispatch(event::Record &&ev) {
+  assert(ev.record);
+
+  auto *record{ev.record.get()};
   if (!hasAcceptableLatency(record)) {
     logging::TaggedMessage msg{
-        record->streamID(),
+        ev.record->streamID(),
         "record exceeds acceptable latency. Dropping record (start=" +
             record->startTime().iso() + ", end=" + record->endTime().iso() +
             ")"};
@@ -656,8 +655,9 @@ void Detector::dispatchRecord(const Record *record) {
        ++i) {
     auto &templateProcessor{_templateProcessors[i->second]};
 
-    TemplateProcessor::Event ev{event::Record{record}};
-    templateProcessor.dispatch(ev);
+    // XXX(damb): clone. The record might be used by multiple template
+    // processors.
+    templateProcessor.dispatch(event::Record{ev});
     if (templateProcessor.finished()) {
       templateProcessor.reset();
     }

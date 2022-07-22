@@ -3,6 +3,7 @@
 #include <seiscomp/client/application.h>
 
 #include <boost/variant2/variant.hpp>
+#include <cstddef>
 #include <string>
 #include <thread>
 
@@ -39,7 +40,7 @@ bool DetectorWorker::init() {
   emitApplicationNotification(Client::Notification{
       static_cast<int>(WorkerNotification::kInitializing)});
 
-  for (auto i{0}; i < _detectors.size(); ++i) {
+  for (std::size_t i{0}; i < _detectors.size(); ++i) {
     auto& detector{_detectors[i]};
     const auto& associatedWaveformStreamIds{
         detector->associatedWaveformStreamIds()};
@@ -118,7 +119,18 @@ void DetectorWorker::EventHandler::operator()(Detector::Event&& ev) {
 
   // -> control the record stream by means of the congestion window
 
-  boost::variant2::visit(InternalEventHandler{worker}, std::move(ev));
+  boost::variant2::visit(DetectorEventHandler{worker}, std::move(ev));
+}
+
+DetectorWorker::DetectorEventHandler::DetectorEventHandler(
+    DetectorWorker* worker)
+    : worker{worker} {}
+
+void DetectorWorker::DetectorEventHandler::operator()(
+    detector::event::Link&& ev) {
+  // XXX(damb): no bounds checking
+  worker->_detectors[worker->_detectorIdIdx[ev.detectorId]]->dispatch(
+      std::move(ev));
 }
 
 DetectorWorker::InternalEventHandler::InternalEventHandler(
@@ -127,12 +139,13 @@ DetectorWorker::InternalEventHandler::InternalEventHandler(
 
 void DetectorWorker::InternalEventHandler::operator()(
     detector::event::Record&& ev) {
-  worker->dispatchRecord(ev);
+  worker->dispatch(std::move(ev));
 }
 
 void DetectorWorker::handle(Event&& ev) {
   boost::variant2::visit(EventHandler{this}, std::move(ev));
 }
+
 void DetectorWorker::initDetectorIdx(
     const Detector& detector, std::size_t idx,
     const std::set<WaveformStreamId>& associatedWaveformStreamIds) {
@@ -166,13 +179,13 @@ void DetectorWorker::handleCommand(const event::Command& ev) {
   }
 }
 
-void DetectorWorker::dispatchRecord(const detector::event::Record& ev) {
+void DetectorWorker::dispatch(detector::event::Record&& ev) {
   auto range{_detectorWaveformStreamIdIdx.equal_range(ev.record->streamID())};
   for (auto it{range.first}; it != range.second; ++it) {
     auto& detector{_detectors[it->second]};
 
-    detector::event::Record cloned{ev};
-    detector->dispatch(std::move(cloned));
+    // XXX(damb): clone. The record might be used by multiple detectors.
+    detector->dispatch(Detector::Event{detector::event::Record{ev}});
     if (detector->finished()) {
       detector->reset();
     }
@@ -192,10 +205,10 @@ void DetectorWorker::storeDetection(
 }
 
 bool DetectorWorker::storeRecord(std::unique_ptr<Record> record) {
-  Event ev{detector::event::Record{record.release()}};
   // TODO(damb): monitor the queue size and modify the congestion window
   // in order to avoid feeding all the records at once
-  _eventQueue.put(std::move(ev), _recordCongestionWindow);
+  _eventQueue.put(detector::event::Record{record.release()},
+                  _recordCongestionWindow);
   return true;
 }
 

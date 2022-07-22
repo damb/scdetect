@@ -14,6 +14,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 #include "../builder.h"
 #include "../config/detector.h"
@@ -27,6 +28,7 @@
 #include "detection_processor.h"
 #include "event/link.h"
 #include "event/record.h"
+#include "exception.h"
 #include "inventory.h"
 #include "linker.h"
 #include "linker/association.h"
@@ -36,6 +38,14 @@
 namespace Seiscomp {
 namespace detect {
 namespace detector {
+namespace detail {
+
+template <typename T>
+struct Identity {
+  using type = T;
+};
+
+}  // namespace detail
 
 // Event-driven detector implementation. It does neither implement an event
 // loop nor an event queue. Instead, it relies on e.g. `worker::DetectorWorker`
@@ -178,31 +188,51 @@ class Detector : public processing::Processor {
     using InternalEvent = TemplateProcessor::Event;
     explicit EventHandler(Detector *detector);
 
-    void operator()(event::Link &ev);
-    void operator()(InternalEvent &ev);
+    void operator()(event::Link &&ev);
+    void operator()(InternalEvent &&ev);
 
     Detector *detector{nullptr};
   };
 
   friend EventHandler;
 
-  struct InternalEventHandler {
-    InternalEventHandler(Detector *detector);
-    void operator()(const event::Record &ev);
-
+  class InternalEventHandler {
+   public:
+    explicit InternalEventHandler(Detector *detector);
     template <typename TInternalEvent>
     void operator()(TInternalEvent &&ev) {
-      // XXX(damb): no bounds checking
-      detector
-          ->_templateProcessors
-              [detector->_templateProcessorIdIdx[ev.templateProcessorId]]
-          .dispatch(std::move(ev));
+      dispatch(std::forward<TInternalEvent>(ev),
+               detail::Identity<TInternalEvent>{});
     }
 
     Detector *detector{nullptr};
+
+   private:
+    template <typename TInternalEvent>
+    void dispatch(TInternalEvent &&ev, detail::Identity<TInternalEvent>) {
+      const auto &templateProcessorId{
+          boost::variant2::visit(TemplateIdExtractor{}, ev)};
+
+      // XXX(damb): no bounds checking
+      detector
+          ->_templateProcessors
+              [detector->_templateProcessorIdIdx[templateProcessorId]]
+          .dispatch(std::forward<TInternalEvent>(ev));
+    }
+
+    void dispatch(event::Record &&ev, detail::Identity<event::Record>) {
+      detector->dispatch(std::move(ev));
+    }
   };
 
   friend InternalEventHandler;
+
+  struct TemplateIdExtractor {
+    template <typename TInternalEvent>
+    std::string operator()(const TInternalEvent &ev) {
+      return ev.templateProcessorId;
+    }
+  };
 
   Detector();
 
@@ -229,7 +259,7 @@ class Detector : public processing::Processor {
 
   void link(const detail::ProcessorIdType &templateProcessorId,
             MatchResult &&matchResult);
-  void dispatchRecord(const Record *record);
+  void dispatch(event::Record &&ev);
 
   void resetTemplateProcessorLinkingInfo();
 
