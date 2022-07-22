@@ -1,28 +1,19 @@
 #ifndef SCDETECT_APPS_CC_APP_H_
 #define SCDETECT_APPS_CC_APP_H_
 
-#include <seiscomp/client/application.h>
 #include <seiscomp/client/streamapplication.h>
-#include <seiscomp/core/datetime.h>
-#include <seiscomp/core/record.h>
 #include <seiscomp/datamodel/amplitude.h>
-#include <seiscomp/datamodel/arrival.h>
-#include <seiscomp/datamodel/databasequery.h>
 #include <seiscomp/datamodel/eventparameters.h>
 #include <seiscomp/datamodel/magnitude.h>
 #include <seiscomp/datamodel/origin.h>
 #include <seiscomp/datamodel/pick.h>
 #include <seiscomp/datamodel/stationmagnitude.h>
-#include <seiscomp/system/commandline.h>
 
 #include <boost/optional/optional.hpp>
 #include <cassert>
 #include <cstddef>
 #include <fstream>
-#include <iostream>
-#include <list>
 #include <memory>
-#include <set>
 #include <string>
 #include <thread>
 #include <unordered_map>
