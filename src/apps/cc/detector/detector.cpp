@@ -30,7 +30,9 @@ Detector::Builder::Builder(const std::string &originId)
     throw builder::BaseException{"error while assigning origin: origin (" +
                                  originId + ") not found"};
   }
-  setProduct(util::make_unique<Detector>());
+  // XXX(damb): Using `new` to access a non-public ctor; see also
+  // https://abseil.io/tips/134
+  setProduct(std::unique_ptr<Detector>{new Detector{}});
   setTemplateOrigin();
 }
 
