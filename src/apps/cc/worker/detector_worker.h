@@ -31,9 +31,13 @@ class DetectorWorker : public Worker {
   using Event = boost::variant2::variant<event::Command, Detector::Event>;
   using EmitApplicationNotificationCallback =
       std::function<void(const Client::Notification&)>;
+  using Id = std::thread::id;
 
   DetectorWorker(RecordStream&& recordStream,
                  std::vector<std::unique_ptr<Detector>>&& detectors);
+
+  // Returns the worker's id
+  static Id id();
 
   // Pauses the worker
   void pause(bool enable);

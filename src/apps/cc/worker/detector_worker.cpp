@@ -4,6 +4,7 @@
 
 #include <boost/variant2/variant.hpp>
 #include <string>
+#include <thread>
 
 #include "../notification.h"
 #include "../util/waveform_stream_id.h"
@@ -18,6 +19,8 @@ DetectorWorker::DetectorWorker(
     std::vector<std::unique_ptr<Detector>>&& detectors)
     : _detectors{std::move(detectors)},
       _recordStream{std::move(recordStream)} {}
+
+DetectorWorker::Id DetectorWorker::id() { return std::this_thread::get_id(); }
 
 void DetectorWorker::pause(bool enable) { _paused = enable; }
 
