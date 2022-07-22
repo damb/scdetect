@@ -12,6 +12,7 @@ namespace worker {
 
 RecordStream::RecordStream(std::string recordStreamURI)
     : _recordStreamURI{std::move(recordStreamURI)} {}
+
 RecordStream::~RecordStream() { terminate(); }
 
 bool RecordStream::open() {

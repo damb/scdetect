@@ -56,6 +56,7 @@
 #include "util/waveform_stream_id.h"
 #include "version.h"
 #include "worker/event/command.h"
+#include "worker/recordstream.h"
 
 namespace Seiscomp {
 namespace detect {
