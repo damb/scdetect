@@ -30,7 +30,8 @@ struct ProcessedState {};
 // Finite state machine implementing template waveform processing
 class StateMachine {
  public:
-  StateMachine(const Record* record, const TemplateProcessor* parent = nullptr);
+  explicit StateMachine(const Record* record,
+                        const TemplateProcessor* parent = nullptr);
 
   using Event = boost::variant2::variant<
       event::CheckSaturation, /*event::Resample,*/ event::Filter,
