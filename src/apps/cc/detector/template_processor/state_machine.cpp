@@ -13,7 +13,9 @@ namespace template_processor {
 
 StateMachine::StateMachine(const Record* record,
                            const TemplateProcessor* parent)
-    : _record{record}, _parent{parent} {}
+    : _record{record},
+      _data{dynamic_cast<DoubleArray*>(_record->data()->copy(Array::DOUBLE))},
+      _parent{parent} {}
 
 StateMachine::Transitions::Transitions(StateMachine* stateMachine)
     : stateMachine{stateMachine} {}
