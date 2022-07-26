@@ -83,6 +83,10 @@ void RecordStream::setOnAquisitionFinished(OnAquisitionFinishedCallback f) {
 }
 
 void RecordStream::read() {
+  if (!_storeCallback) {
+    return;
+  }
+
   SCDETECT_LOG_INFO("Starting record acquisition");
 
   IO::RecordInput recInput{_recordStream.get()};
