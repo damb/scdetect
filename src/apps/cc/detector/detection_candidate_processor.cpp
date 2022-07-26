@@ -88,7 +88,7 @@ void DetectionCandidateProcessor::processCandidate(
       // enable trigger
       if (_triggerDuration && *_triggerDuration > Core::TimeSpan{0.0}) {
         SCDETECT_LOG_DEBUG_PROCESSOR(_detector,
-                                     "Detector result (triggering) %s",
+                                     "Detector result (triggering): %s",
                                      candidate.debugString().c_str());
 
         if (_onTriggeredCallback) {
@@ -100,7 +100,7 @@ void DetectionCandidateProcessor::processCandidate(
 
         newTrigger = true;
       } else {
-        SCDETECT_LOG_DEBUG_PROCESSOR(_detector, "Detector result %s",
+        SCDETECT_LOG_DEBUG_PROCESSOR(_detector, "Detector result: %s",
                                      candidate.debugString().c_str());
       }
     } else if (triggered() && (pickTime <= *_triggerEnd) &&
@@ -108,7 +108,7 @@ void DetectionCandidateProcessor::processCandidate(
                candidate.processorCount() >=
                    _currentDetectionCandidate.value().processorCount()) {
       SCDETECT_LOG_DEBUG_PROCESSOR(_detector,
-                                   "Detector result (triggered, updating) %s",
+                                   "Detector result (triggered, updating): %s",
                                    candidate.debugString().c_str());
 
       _currentDetectionCandidate = candidate;
@@ -131,7 +131,7 @@ void DetectionCandidateProcessor::processCandidate(
         candidate.score <= _currentDetectionCandidate.value().score &&
         candidate.score >= triggerOffThreshold) {
       SCDETECT_LOG_DEBUG_PROCESSOR(_detector,
-                                   "Detector result (triggered, dropped) %s",
+                                   "Detector result (triggered, dropped): %s",
                                    candidate.debugString().c_str());
     }
 
@@ -151,7 +151,7 @@ void DetectionCandidateProcessor::processCandidate(
   // re-trigger
   if (expired && candidate.score > triggerOnThreshold &&
       *_currentDetectionCandidate != candidate) {
-    SCDETECT_LOG_DEBUG_PROCESSOR(_detector, "Detector result (triggering) %s",
+    SCDETECT_LOG_DEBUG_PROCESSOR(_detector, "Detector result (triggering): %s",
                                  candidate.debugString().c_str());
 
     _currentDetectionCandidate = candidate;
