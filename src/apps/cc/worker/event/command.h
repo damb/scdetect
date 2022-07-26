@@ -8,14 +8,14 @@ namespace event {
 
 class Command {
  public:
-  enum class Type { kClose, kShutdown };
+  enum class Type { kClose, kShutdown, kTerminate };
 
-  explicit Command(Type type = Type::kShutdown);
+  explicit Command(Type type = Type::kClose);
 
   Type type() const;
 
  private:
-  Type _type{Type::kShutdown};
+  Type _type{Type::kClose};
 };
 
 }  // namespace event

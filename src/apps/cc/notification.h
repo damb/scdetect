@@ -22,6 +22,7 @@ class WorkerNotification : public Core::BaseObject {
     kFinishedProcessing,
     kShuttingDown,
     kShutdown,
+    kTerminated,
     kDetection = -1,
   };
 

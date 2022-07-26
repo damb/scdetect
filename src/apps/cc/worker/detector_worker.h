@@ -68,6 +68,8 @@ class DetectorWorker : public Worker {
   void close();
   // Returns whether the worker is closed
   bool closed() const;
+  // Terminates the worker
+  void terminate();
   // Gracefully shuts the worker down
   void shutdown();
 

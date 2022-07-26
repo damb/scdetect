@@ -48,10 +48,38 @@ void DetectorWorker::close() {
 
 bool DetectorWorker::closed() const { return _closed; }
 
+void DetectorWorker::terminate() {
+  _recordStream.terminate();
+
+  for (auto& detector : _detectors) {
+    detector->terminate();
+  }
+
+  emitApplicationNotification(Client::Notification{
+      static_cast<int>(WorkerNotification::Type::kTerminated),
+      new WorkerNotification{id()}});
+
+  _exitRequested = true;
+
+  _status = Status::kTerminated;
+}
+
 void DetectorWorker::shutdown() {
+  emitApplicationNotification(Client::Notification{
+      static_cast<int>(WorkerNotification::Type::kShuttingDown),
+      new WorkerNotification{id()}});
+
+  for (auto& detector : _detectors) {
+    detector->flush();
+  }
+
   _exitRequested = true;
 
   _status = Status::kFinished;
+
+  emitApplicationNotification(Client::Notification{
+      static_cast<int>(WorkerNotification::Type::kShutdown),
+      new WorkerNotification{id()}});
 }
 
 void DetectorWorker::postEvent(Event&& ev) { _eventQueue.put(std::move(ev)); }
@@ -119,17 +147,9 @@ void DetectorWorker::run() {
 }
 
 void DetectorWorker::done() {
-  emitApplicationNotification(Client::Notification{
-      static_cast<int>(WorkerNotification::Type::kShuttingDown),
-      new WorkerNotification{id()}});
-
   Worker::done();
 
   _recordStream.terminate();
-
-  emitApplicationNotification(Client::Notification{
-      static_cast<int>(WorkerNotification::Type::kShutdown),
-      new WorkerNotification{id()}});
 }
 
 DetectorWorker::EventHandler::EventHandler(DetectorWorker* worker)
@@ -230,6 +250,10 @@ void DetectorWorker::handleCommand(const event::Command& ev) {
     case CommandType::kShutdown: {
       flush();
       shutdown();
+      break;
+    }
+    case CommandType::kTerminate: {
+      terminate();
       break;
     }
     default:

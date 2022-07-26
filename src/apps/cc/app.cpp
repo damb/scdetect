@@ -1,5 +1,6 @@
 #include "app.h"
 
+#include <seiscomp/client/streamapplication.h>
 #include <seiscomp/core/arrayfactory.h>
 #include <seiscomp/core/exceptions.h>
 #include <seiscomp/core/record.h>
@@ -28,6 +29,7 @@
 #include <boost/property_tree/ptree.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 #include <cassert>
+#include <csignal>
 #include <cstddef>
 #include <exception>
 #include <ios>
@@ -83,6 +85,14 @@ Application::DuplicatePublicObjectId::DuplicatePublicObjectId()
     : BaseException{"duplicate public object identifier"} {}
 
 const char *Application::version() { return kVersion; }
+
+void Application::exit(int returnCode) {
+  _returnCode = returnCode;
+
+  for (auto &pair : _detectorWorkers) {
+    pair.second->postEvent(WorkerCommand{WorkerCommand::Type::kTerminate});
+  }
+}
 
 void Application::createCommandLineDescription() {
   StreamApplication::createCommandLineDescription();
@@ -424,6 +434,19 @@ void Application::done() {
   StreamApplication::done();
 }
 
+void Application::handleInterrupt(int sig) {
+  switch (sig) {
+    // XXX(damb): the corresponding signal handler for signal `SIGINT` is
+    // installed by `system::Application`
+    case SIGINT: {
+      exit(_returnCode);
+      break;
+    }
+    default:
+      SCDETECT_LOG_DEBUG("Unhandled signal received");
+  }
+}
+
 bool Application::dispatchNotification(int type, Core::BaseObject *obj) {
   using WorkerNotificationType = WorkerNotification::Type;
   if (type < static_cast<int>(WorkerNotificationType::kDetection)) {
@@ -476,6 +499,21 @@ bool Application::dispatchNotification(int type, Core::BaseObject *obj) {
 
         if (allDetectorWorkersFinished) {
           _exitRequested = true;
+        }
+
+        break;
+      }
+      case static_cast<int>(WorkerNotificationType::kTerminated): {
+        SCDETECT_LOG_DEBUG_TAGGED(tag, "Worker terminated");
+
+        auto allDetectorWorkersTerminated{std::all_of(
+            std::begin(_detectorWorkers), std::end(_detectorWorkers),
+            [](const DetectorWorkers::value_type &p) {
+              return p.second->status() == DetectorWorker::Status::kTerminated;
+            })};
+
+        if (allDetectorWorkersTerminated) {
+          Client::StreamApplication::exit(_returnCode);
         }
 
         break;
@@ -711,6 +749,17 @@ void Application::shutdownDetectorWorkers() {
         SCDETECT_LOG_WARNING("Failed to shutdown worker: %s", e.what());
         continue;
       }
+    }
+  }
+}
+
+void Application::shutdownDetectorWorker(const DetectorWorker::Id &workerId) {
+  auto &workerThread{_detectorWorkerThreads[workerId]};
+  if (workerThread.joinable()) {
+    try {
+      workerThread.join();
+    } catch (const std::system_error &e) {
+      SCDETECT_LOG_WARNING("Failed to shutdown worker: %s", e.what());
     }
   }
 }

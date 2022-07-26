@@ -171,6 +171,8 @@ class Application : public Client::StreamApplication {
 
   const char *version() override;
 
+  void exit(int returnCode) override;
+
  protected:
   void createCommandLineDescription() override;
   bool validateParameters() override;
@@ -180,6 +182,8 @@ class Application : public Client::StreamApplication {
   bool init() override;
   bool run() override;
   void done() override;
+
+  void handleInterrupt(int sig) override;
 
   // Dispatches custom worker notifications
   bool dispatchNotification(int type, Core::BaseObject *obj) override;
