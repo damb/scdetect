@@ -97,9 +97,9 @@ boost::optional<StateMachine::State> StateMachine::Transitions::operator()(
                static_cast<int>(
                    stateMachine->parent()->streamState().receivedSamples -
                    stateMachine->parent()->streamState().neededSamples));
-    const auto t{static_cast<double>(startIdx) / n};
-    start =
-        record.startTime() + Core::TimeSpan{record.timeWindow().length() * t};
+    const auto timeOffset{static_cast<double>(startIdx) / n};
+    start = record.startTime() +
+            Core::TimeSpan{record.timeWindow().length() * timeOffset};
   }
 
   LocalMaxima localMaxima;
