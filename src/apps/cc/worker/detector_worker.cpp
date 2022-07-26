@@ -202,10 +202,6 @@ DetectorWorker::InternalEventHandler::InternalEventHandler(
 void DetectorWorker::InternalEventHandler::operator()(
     detector::event::Record&& ev) {
   worker->dispatch(std::move(ev));
-  /* if (worker->closed() && */
-  /*     worker->_dispatchedRecords == worker->_storedRecords) { */
-  /*   worker->closeDetectors(); */
-  /* } */
 }
 
 void DetectorWorker::handle(Event&& ev) {
