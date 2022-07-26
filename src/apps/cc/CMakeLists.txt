@@ -28,6 +28,7 @@ set(
     filter.cpp
     log.cpp
     main.cpp
+    notification.cpp
     processing/detail/gap_interpolate.cpp
     processing/processor.cpp
     processing/stream.cpp

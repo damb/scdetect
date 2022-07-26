@@ -18,12 +18,18 @@ class WorkerNotification : public Core::BaseObject {
     kInitializing = -1000,
     kInitialized,
     kRunning,
-    kTerminating,
-    kFinished,
+    kFinishedRecordStreaming,
+    kFinishedProcessing,
+    kShuttingDown,
+    kShutdown,
     kDetection = -1,
   };
 
+  explicit WorkerNotification(std::string workerId);
+
   std::thread::id threadId{std::this_thread::get_id()};
+
+  std::string workerId;
 };
 
 }  // namespace detect

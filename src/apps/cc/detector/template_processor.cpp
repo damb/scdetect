@@ -5,6 +5,8 @@
 
 #include "../def.h"
 #include "detector.h"
+#include "event/status.h"
+#include "exception.h"
 #include "template_processor/state_machine.h"
 
 namespace Seiscomp {
@@ -15,8 +17,15 @@ TemplateProcessor::TemplateProcessor(TemplateWaveform templateWaveform,
                                      Detector* parent)
     : _crossCorrelation{std::move(templateWaveform)}, _parent{parent} {}
 
-bool TemplateProcessor::finished() const {
-  return _status > Status::kWaitingForData;
+void TemplateProcessor::close() { _status = Status::kClosed; }
+
+void TemplateProcessor::flush() {
+  if (!_streamState.lastRecord) {
+    // nothing to do
+    return;
+  }
+
+  flushBuffer();
 }
 
 void TemplateProcessor::reset() {
@@ -24,6 +33,11 @@ void TemplateProcessor::reset() {
   _crossCorrelation.reset();
 
   _status = Status::kWaitingForData;
+}
+
+bool TemplateProcessor::finished() const {
+  return (_status == Status::kClosed && _stateMachines.empty()) ||
+         _status > Status::kClosed;
 }
 
 void TemplateProcessor::dispatch(Event&& ev) {
@@ -58,6 +72,24 @@ std::size_t TemplateProcessor::size() const noexcept {
 }
 
 TemplateProcessor::Status TemplateProcessor::status() const { return _status; }
+
+void TemplateProcessor::setTargetSamplingFrequency(
+    boost::optional<double> freq) {
+  assert((!freq || (freq && *freq > 0)));
+
+  bool targetSamplingFrequencyChanges{(!_targetSamplingFrequency && freq) ||
+                                      (_targetSamplingFrequency && !freq) ||
+                                      (*_targetSamplingFrequency != *freq)};
+  if (targetSamplingFrequencyChanges) {
+    reset();
+  }
+
+  _targetSamplingFrequency = freq;
+}
+
+boost::optional<double> TemplateProcessor::targetSamplingFrequency() const {
+  return _targetSamplingFrequency;
+}
 
 const Core::TimeSpan& TemplateProcessor::configuredBufferSize() const {
   return _buffer.configuredBufferSize();
@@ -126,20 +158,33 @@ void TemplateProcessor::HandleFinished::operator()(
     const template_processor::SaturatedState& s) {
   assert(processor);
   processor->setStatus(Status::kDataClipped);
+  if (!processor->tryToRunNextStateMachine() &&
+      processor->status() == Status::kClosed) {
+    processor->parent()->postEvent(
+        createStatusEvent(processor, event::Status::Type::kFinishedProcessing));
+  }
 }
 
 void TemplateProcessor::HandleFinished::operator()(
     const template_processor::CrossCorrelatedState& s) {
   assert(processor);
   processor->_stateMachines.pop();
-  processor->tryToRunNextStateMachine();
+  if (!processor->tryToRunNextStateMachine() &&
+      processor->status() == Status::kClosed) {
+    processor->parent()->postEvent(
+        createStatusEvent(processor, event::Status::Type::kFinishedProcessing));
+  }
 }
 
 void TemplateProcessor::HandleFinished::operator()(
     const template_processor::ProcessedState& s) {
   assert(processor);
   processor->_stateMachines.pop();
-  processor->tryToRunNextStateMachine();
+  if (!processor->tryToRunNextStateMachine() &&
+      processor->status() == Status::kClosed) {
+    processor->parent()->postEvent(
+        createStatusEvent(processor, event::Status::Type::kFinishedProcessing));
+  }
 }
 
 void TemplateProcessor::reset(StreamState& streamState) {
@@ -151,11 +196,23 @@ void TemplateProcessor::reset(StreamState& streamState) {
   }
 }
 
+event::Status TemplateProcessor::createStatusEvent(
+    const TemplateProcessor* templateProcessor, event::Status::Type type) {
+  event::Status ret;
+  ret.detectorId = templateProcessor->parent()->id();
+  ret.templateProcessorId = templateProcessor->id();
+  ret.type = type;
+  return ret;
+}
+
 void TemplateProcessor::setStatus(Status status) { _status = status; }
 
 bool TemplateProcessor::feed(const Record* record) {
   if (status() > Status::kWaitingForData ||
       !static_cast<bool>(record->data())) {
+    if (status() == Status::kClosed) {
+      throw BaseException{"processor closed"};
+    }
     return false;
   }
 
@@ -197,6 +254,8 @@ bool TemplateProcessor::feed(const Record* record) {
   _streamState.lastSample = (*data)[data->size() - 1];
 
   fill(_streamState, record, data);
+  _streamState.lastRecord = record;
+
   if (_buffer.full()) {
     flushBuffer();
   }
@@ -226,35 +285,6 @@ bool TemplateProcessor::store(const Record* record) {
   return true;
 }
 
-bool TemplateProcessor::tryToRunNextStateMachine() {
-  if (_stateMachines.empty()) {
-    // nothing to do
-    return false;
-  }
-
-  // send initial event to state machine
-  auto& stateMachine{_stateMachines.front()};
-
-  bool initState{0 == stateMachine.state().index()};
-  if (initState) {
-    if (_saturationThreshold) {
-      event::CheckSaturation ev;
-      ev.threshold = *_saturationThreshold;
-      stateMachine.dispatch(ev);
-    } else if (_streamState.filter) {
-      event::Filter ev;
-      ev.filter = _streamState.filter.get();
-      stateMachine.dispatch(ev);
-    } else {
-      event::CrossCorrelate ev;
-      ev.filter = &_crossCorrelation;
-      stateMachine.dispatch(ev);
-    }
-    return true;
-  }
-  return false;
-}
-
 void TemplateProcessor::setupStream(const Record* record) {
   const auto& f{record->samplingFrequency()};
   _streamState.samplingFrequency = f;
@@ -277,6 +307,43 @@ void TemplateProcessor::setupStream(const Record* record) {
         record->networkCode(), record->stationCode(), record->locationCode(),
         record->channelCode());
   }
+
+  _crossCorrelation.setSamplingFrequency(_targetSamplingFrequency.value_or(f));
+}
+
+bool TemplateProcessor::tryToRunNextStateMachine() {
+  if (_stateMachines.empty()) {
+    // nothing to do
+    return false;
+  }
+
+  // send initial event to state machine
+  auto& stateMachine{_stateMachines.front()};
+
+  bool initState{0 == stateMachine.state().index()};
+  if (initState) {
+    if (_saturationThreshold) {
+      event::CheckSaturation ev;
+      ev.threshold = *_saturationThreshold;
+      stateMachine.dispatch(std::move(ev));
+    } else if (_streamState.filter) {
+      event::Filter ev;
+      ev.filter = _streamState.filter.get();
+      stateMachine.dispatch(std::move(ev));
+    } else {
+      event::CrossCorrelate ev;
+      ev.filter = &_crossCorrelation;
+      stateMachine.dispatch(std::move(ev));
+    }
+
+    // XXX(damb): only update the number of received samples once the next
+    // state machine is run
+    _streamState.receivedSamples +=
+        static_cast<size_t>(stateMachine.record().sampleCount());
+
+    return true;
+  }
+  return false;
 }
 
 }  // namespace detector

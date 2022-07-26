@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "../detector/detector.h"
+#include "../detector/event/status.h"
 #include "../util/sync_queue.h"
 #include "../worker.h"
 #include "event/command.h"
@@ -30,19 +31,44 @@ class DetectorWorker : public Worker {
   using Event = boost::variant2::variant<event::Command, Detector::Event>;
   using EmitApplicationNotificationCallback =
       std::function<void(const Client::Notification&)>;
-  using Id = std::thread::id;
+  using Id = std::string;
+  using ThreadId = std::thread::id;
+
+  enum class Status {
+    kInitialized,
+    kRunning,
+    kTerminated,
+    kFinished,
+  };
 
   DetectorWorker(RecordStream&& recordStream,
                  std::vector<std::unique_ptr<Detector>>&& detectors);
 
-  // Returns the worker's id
-  static Id id();
+  // Returns the worker's identifier which may differ from its `threadId()`
+  const Id& id() const;
+  // Sets the worker's identifier
+  void setId(Id workerId);
+  // Returns the worker's thread identifier
+  static ThreadId threadId();
+
+  // Returns the worker's status
+  Status status() const;
 
   // Pauses the worker
   void pause(bool enable);
   // Returns whether the worker is currently paused
   bool paused() const;
 
+  // Flushes the worker
+  void flush();
+  // Closes the worker
+  //
+  // - after closing the worker won't accept new waveform data (i.e.
+  // `event::Record`s) anymore
+  void close();
+  // Returns whether the worker is closed
+  bool closed() const;
+  // Gracefully shuts the worker down
   void shutdown();
 
   // Posts `ev` to the worker
@@ -79,6 +105,7 @@ class DetectorWorker : public Worker {
   struct DetectorEventHandler {
     explicit DetectorEventHandler(DetectorWorker* worker);
     void operator()(detector::event::Link&& ev);
+    void operator()(detector::event::Status&& ev);
 
     template <typename TDetectorEvent>
     void operator()(TDetectorEvent&& ev) {
@@ -121,10 +148,12 @@ class DetectorWorker : public Worker {
       const Detector& detector, std::size_t idx,
       const std::set<WaveformStreamId>& associatedWaveformStreamIds);
   void initDetector(Detector& detector);
+  void closeDetectors();
 
   void handle(Event&& ev);
 
   void handleCommand(const event::Command& ev);
+  void handleStatus(const detector::event::Status& ev);
 
   void dispatch(detector::event::Record&& ev);
 
@@ -132,6 +161,8 @@ class DetectorWorker : public Worker {
   void storeDetection(const Detector* detector,
                       std::unique_ptr<Detector::Detection> detection);
   bool storeRecord(std::unique_ptr<Record> record);
+
+  void startAcquisition();
   void onAquisitionFinished();
 
   void sleep_or_yield();
@@ -146,6 +177,8 @@ class DetectorWorker : public Worker {
 
   RecordStream _recordStream;
 
+  Id _id;
+
   EmitApplicationNotificationCallback _emitApplicationNotificationCallback;
 
   // Sleep duration in microseconds
@@ -155,11 +188,16 @@ class DetectorWorker : public Worker {
   // stored in the input event queue
   std::atomic<std::size_t> _recordCongestionWindow{10};
 
+  Status _status{Status::kInitialized};
+
   // An atomic variable indicating whether the worker should pause. When set to
   // `true`, the worker temporarily stops retrieving new tasks out of its queue,
   // although any tasks already executed will keep running until they are
   // finished. Set to `false` again to resume retrieving tasks.
   std::atomic<bool> _paused{false};
+  // An atomic variable indicating whether the worker is closed. If closed, it
+  // doesn't accept new record events, anymore.
+  std::atomic<bool> _closed{false};
   // An atomic variable indicating to the worker to keep running. When set to
   // `true`, the worker permanently stops working.
   std::atomic<bool> _exitRequested{false};

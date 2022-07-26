@@ -191,8 +191,8 @@ boost::optional<StateMachine::State> StateMachine::crossCorrelateAndEmit(
 
   StateMachine::Event nextEvent;
   if (!parent()->streamState().initialized) {
-    if (parent()->streamState().neededSamples >=
-        parent()->streamState().receivedSamples) {
+    if (parent()->streamState().receivedSamples >=
+        parent()->streamState().neededSamples) {
       nextEvent = event::Process{};
     } else {
       nextEvent = event::Finished{};

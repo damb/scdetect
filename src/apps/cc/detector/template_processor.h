@@ -16,6 +16,7 @@
 #include "../template_waveform.h"
 #include "detail.h"
 #include "event/record.h"
+#include "event/status.h"
 #include "template_processor/buffer.h"
 #include "template_processor/state_machine.h"
 
@@ -38,6 +39,7 @@ class TemplateProcessor : public processing::Processor,
 
   enum class Status {
     kWaitingForData = 0,
+    kClosed,
     kTerminated,
     // No associated value yet (error code?)
     kError,
@@ -64,11 +66,17 @@ class TemplateProcessor : public processing::Processor,
   // Returns the processor's current stream state
   const StreamState& streamState() const;
 
+  // Closes the processor
+  //
+  // - after closing the processor does not accept new waveform data (i.e.
+  // `event::Record`s) anymore
+  void close();
+  // Flushes the processor
+  void flush();
+  // Resets the processor
+  void reset();
   // Returns whether the processor has finished
   bool finished() const;
-
-  // Resets the `TemplateProcessor`
-  void reset();
 
   void dispatch(Event&& ev);
 
@@ -89,6 +97,12 @@ class TemplateProcessor : public processing::Processor,
 
   // Returns the processor's status
   Status status() const;
+
+  // Sets the target sampling frequency
+  //
+  // - if the sampling frequency changes, the processor is implicitly reset
+  void setTargetSamplingFrequency(boost::optional<double> freq);
+  boost::optional<double> targetSamplingFrequency() const;
 
   const Core::TimeSpan& configuredBufferSize() const;
   void setConfiguredBufferSize(const Core::TimeSpan& duration);
@@ -146,6 +160,9 @@ class TemplateProcessor : public processing::Processor,
 
   static void reset(StreamState& streamState);
 
+  static event::Status createStatusEvent(
+      const TemplateProcessor* templateProcessor, event::Status::Type type);
+
   // Set the processor's status
   void setStatus(Status status);
 
@@ -157,11 +174,11 @@ class TemplateProcessor : public processing::Processor,
   // Creates a new `StateMachine` for each record fed
   bool store(const Record* record);
 
+  void setupStream(const Record* record);
+
   // Tries to run the next state machine. Returns `true` if a state machine was
   // run, else `false`.
   bool tryToRunNextStateMachine();
-
-  void setupStream(const Record* record);
 
   // XXX(damb): for optimization: in future, state machines might be executed
   // in parallel. However, the `TemplateProcessor` needs to make sure that
@@ -177,6 +194,9 @@ class TemplateProcessor : public processing::Processor,
   StreamState _streamState;
 
   boost::optional<double> _saturationThreshold;
+  // Optional target sampling frequency the processor is operating on
+  boost::optional<double> _targetSamplingFrequency;
+
   // Processor initialization time (usually corresponds to the filter
   // initialization time)
   boost::optional<Core::TimeSpan> _initTime;

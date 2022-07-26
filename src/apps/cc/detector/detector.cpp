@@ -2,6 +2,7 @@
 
 #include <seiscomp/client/inventory.h>
 
+#include <algorithm>
 #include <boost/variant2/variant.hpp>
 
 #include "../eventstore.h"
@@ -202,7 +203,7 @@ Detector::Builder &Detector::Builder::setStream(
     throw builder::NoWaveformData{logging::to_string(msg)};
   }
 
-  TemplateProcessor templateProcessor{templateWaveform, product()};
+  TemplateProcessor templateProcessor{std::move(templateWaveform), product()};
   templateProcessor.setId(templateProcessorId);
 
   std::string rtFilterId{streamConfig.filter.value_or(pickFilterId)};
@@ -456,7 +457,24 @@ bool Detector::enabled() const { return _enabled; }
 
 Detector::Status Detector::status() const { return _status; }
 
-bool Detector::finished() const { return _status > Status::kWaitingForData; }
+void Detector::close() {
+  for (auto &templateProcessor : _templateProcessors) {
+    templateProcessor.close();
+    templateProcessor.flush();
+  }
+
+  _status = Status::kClosed;
+}
+
+bool Detector::finished() const {
+  return (_status == Status::kClosed &&
+          std::all_of(std::begin(_templateProcessors),
+                      std::end(_templateProcessors),
+                      [](const TemplateProcessors::value_type &p) {
+                        return p.finished();
+                      })) ||
+         _status > Status::kClosed;
+}
 
 void Detector::terminate() {
   SCDETECT_LOG_DEBUG_PROCESSOR(this, "Terminating ...");

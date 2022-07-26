@@ -28,6 +28,7 @@
 #include "detection_processor.h"
 #include "event/link.h"
 #include "event/record.h"
+#include "event/status.h"
 #include "exception.h"
 #include "inventory.h"
 #include "linker.h"
@@ -56,7 +57,8 @@ class Detector : public processing::Processor {
  public:
   using const_iterator = TemplateProcessors::const_iterator;
   using size_type = std::size_t;
-  using Event = boost::variant2::variant<event::Link, TemplateProcessor::Event>;
+  using Event = boost::variant2::variant<event::Link, event::Status,
+                                         TemplateProcessor::Event>;
   using Detection = detector::Detection;
   using EmitDetectionCallback =
       std::function<void(const Detector *, std::unique_ptr<Detection>)>;
@@ -64,9 +66,8 @@ class Detector : public processing::Processor {
 
   enum class Status {
     kWaitingForData = 0,
-    // Associated value is the last status
+    kClosed,
     kTerminated,
-    // No associated value yet (error code?)
     kError,
   };
 
@@ -142,10 +143,14 @@ class Detector : public processing::Processor {
 
   // Returns the detector's status
   Status status() const;
+  // Closes the detector
+  //
+  // - the detector won't accept new waveform data (i.e. `event::Record`s),
+  // anymore
+  void close();
   // Returns whether the detector is finished
   bool finished() const;
-
-  // Terminates the detector ignoring its current status
+  // Terminates the detector
   void terminate();
 
   // Dispatches `ev`
@@ -191,6 +196,9 @@ class Detector : public processing::Processor {
     void operator()(event::Link &&ev);
     void operator()(InternalEvent &&ev);
 
+    template <typename TEvent>
+    void operator()(TEvent &&ev) {}
+
     Detector *detector{nullptr};
   };
 
@@ -221,6 +229,9 @@ class Detector : public processing::Processor {
     }
 
     void dispatch(event::Record &&ev, detail::Identity<event::Record>) {
+      if (detector->status() == Status::kClosed) {
+        throw BaseException{"processor closed"};
+      }
       detector->dispatch(std::move(ev));
     }
   };

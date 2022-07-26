@@ -55,6 +55,7 @@
 #include "util/util.h"
 #include "util/waveform_stream_id.h"
 #include "version.h"
+#include "worker/detector_worker.h"
 #include "worker/event/command.h"
 #include "worker/recordstream.h"
 
@@ -428,29 +429,57 @@ bool Application::dispatchNotification(int type, Core::BaseObject *obj) {
   if (type < static_cast<int>(WorkerNotificationType::kDetection)) {
     assert(obj);
 
-    // XXX(damb): make sure the memory is freed
-    WorkerNotificationCPtr workerNotificationOwner{
+    WorkerNotificationCPtr workerNotification{
         static_cast<WorkerNotification *>(obj)};
 
+    const auto &workerId{workerNotification->workerId};
+
     std::ostringstream oss;
-    oss << workerNotificationOwner->threadId;
+    oss << workerNotification->threadId;
+    const auto tag{workerId + " (" + oss.str() + ")"};
 
     switch (type) {
       case static_cast<int>(WorkerNotificationType::kInitializing):
-        SCDETECT_LOG_DEBUG_TAGGED(oss.str(), "Worker initializing ...");
+        SCDETECT_LOG_DEBUG_TAGGED(tag, "Worker initializing ...");
         break;
       case static_cast<int>(WorkerNotificationType::kInitialized):
-        SCDETECT_LOG_DEBUG_TAGGED(oss.str(), "Worker initialized");
+        SCDETECT_LOG_DEBUG_TAGGED(tag, "Worker initialized");
         break;
       case static_cast<int>(WorkerNotificationType::kRunning):
-        SCDETECT_LOG_DEBUG_TAGGED(oss.str(), "Worker running ...");
+        SCDETECT_LOG_DEBUG_TAGGED(tag, "Worker running ...");
         break;
-      case static_cast<int>(WorkerNotificationType::kTerminating):
-        SCDETECT_LOG_DEBUG_TAGGED(oss.str(), "Worker terminating ...");
+      case static_cast<int>(WorkerNotificationType::kFinishedRecordStreaming): {
+        SCDETECT_LOG_DEBUG_TAGGED(tag, "Worker finished record streaming");
+        // close worker
+        auto &worker{_detectorWorkers[workerNotification->workerId]};
+        worker->postEvent(WorkerCommand{WorkerCommand::Type::kClose});
         break;
-      case static_cast<int>(WorkerNotificationType::kFinished):
-        SCDETECT_LOG_DEBUG_TAGGED(oss.str(), "Worker finished");
+      }
+      case static_cast<int>(WorkerNotificationType::kFinishedProcessing): {
+        SCDETECT_LOG_DEBUG_TAGGED(tag, "Worker finished processing");
+        // shutdown worker
+        auto &worker{_detectorWorkers[workerNotification->workerId]};
+        worker->postEvent(WorkerCommand{WorkerCommand::Type::kShutdown});
         break;
+      }
+      case static_cast<int>(WorkerNotificationType::kShuttingDown):
+        SCDETECT_LOG_DEBUG_TAGGED(tag, "Worker shutting down ...");
+        break;
+      case static_cast<int>(WorkerNotificationType::kShutdown): {
+        SCDETECT_LOG_DEBUG_TAGGED(tag, "Worker shutdown");
+
+        auto allDetectorWorkersFinished{std::all_of(
+            std::begin(_detectorWorkers), std::end(_detectorWorkers),
+            [](const DetectorWorkers::value_type &p) {
+              return p.second->status() == DetectorWorker::Status::kFinished;
+            })};
+
+        if (allDetectorWorkersFinished) {
+          _exitRequested = true;
+        }
+
+        break;
+      }
       default:
         SCDETECT_LOG_WARNING("Unknown worker notification type");
         return false;
@@ -547,15 +576,16 @@ bool Application::initDetectorWorkers(std::ifstream &ifs,
 
   // TODO(damb): perform load balancing; currently all detectors are handled
   // by a single `DetectorWorker`
-
-  auto worker{std::make_shared<DetectorWorker>(
-      worker::RecordStream{recordStreamURL()}, std::move(detectors))};
+  worker::RecordStream recordStream{recordStreamURL()};
+  auto worker{std::make_shared<DetectorWorker>(std::move(recordStream),
+                                               std::move(detectors))};
+  worker->setId(util::createUUID());
 
   // configure notification callback
   worker->setEmitApplicationNotificationCallback(
       [this](const Client::Notification &n) { sendNotification(n); });
 
-  _detectorWorkers.emplace_back(worker);
+  _detectorWorkers.emplace(worker->id(), worker);
 
   return !_detectorWorkers.empty();
 }
@@ -661,27 +691,24 @@ Application::createDetectors(std::ifstream &ifs,
 }
 
 bool Application::startDetectorWorkerThreads() {
-  for (auto &worker : _detectorWorkers) {
-    _detectorWorkerThreads.emplace_back(
-        std::thread{[worker]() { worker->exec(); }});
+  for (auto &p : _detectorWorkers) {
+    const auto &workerId{p.first};
+    auto &worker{p.second};
+    _detectorWorkerThreads.emplace(workerId,
+                                   std::thread{[worker]() { worker->exec(); }});
   }
 
   return true;
 }
 
 void Application::shutdownDetectorWorkers() {
-  using WorkerCommand = worker::event::Command;
-  // shutdown detector workers
-  for (auto &w : _detectorWorkers) {
-    w->postEvent(WorkerCommand{WorkerCommand::Type::kShutdown});
-  }
-
-  for (auto &t : _detectorWorkerThreads) {
-    if (t.joinable()) {
+  for (auto &p : _detectorWorkerThreads) {
+    auto &workerThread{p.second};
+    if (workerThread.joinable()) {
       try {
-        t.join();
+        workerThread.join();
       } catch (const std::system_error &e) {
-        SCDETECT_LOG_WARNING("Failed to stop worker: %s", e.what());
+        SCDETECT_LOG_WARNING("Failed to shutdown worker: %s", e.what());
         continue;
       }
     }

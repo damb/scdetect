@@ -21,13 +21,38 @@ DetectorWorker::DetectorWorker(
     : _detectors{std::move(detectors)},
       _recordStream{std::move(recordStream)} {}
 
-DetectorWorker::Id DetectorWorker::id() { return std::this_thread::get_id(); }
+const DetectorWorker::Id& DetectorWorker::id() const { return _id; }
+
+void DetectorWorker::setId(Id workerId) { _id = std::move(workerId); }
+
+DetectorWorker::ThreadId DetectorWorker::threadId() {
+  return std::this_thread::get_id();
+}
+
+DetectorWorker::Status DetectorWorker::status() const { return _status; }
 
 void DetectorWorker::pause(bool enable) { _paused = enable; }
 
 bool DetectorWorker::paused() const { return _paused; }
 
-void DetectorWorker::shutdown() { _exitRequested = true; }
+void DetectorWorker::flush() {
+  for (auto& detector : _detectors) {
+    detector->flush();
+  }
+}
+
+void DetectorWorker::close() {
+  _closed = true;
+  closeDetectors();
+}
+
+bool DetectorWorker::closed() const { return _closed; }
+
+void DetectorWorker::shutdown() {
+  _exitRequested = true;
+
+  _status = Status::kFinished;
+}
 
 void DetectorWorker::postEvent(Event&& ev) { _eventQueue.put(std::move(ev)); }
 
@@ -37,11 +62,9 @@ void DetectorWorker::setEmitApplicationNotificationCallback(
 }
 
 bool DetectorWorker::init() {
-  {
-    emitApplicationNotification(Client::Notification{
-        static_cast<int>(WorkerNotification::Type::kInitializing),
-        new WorkerNotification{}});
-  }
+  emitApplicationNotification(Client::Notification{
+      static_cast<int>(WorkerNotification::Type::kInitializing),
+      new WorkerNotification{id()}});
 
   for (std::size_t i{0}; i < _detectors.size(); ++i) {
     auto& detector{_detectors[i]};
@@ -61,26 +84,28 @@ bool DetectorWorker::init() {
   }
 
   _recordStream.setStoreCallback([this](std::unique_ptr<Record> record) {
-    storeRecord(std::move(record));
-    return true;
+    return storeRecord(std::move(record));
   });
 
   _recordStream.setOnAquisitionFinished([this]() { onAquisitionFinished(); });
 
-  {
-    emitApplicationNotification(Client::Notification{
-        static_cast<int>(WorkerNotification::Type::kInitialized),
-        new WorkerNotification{}});
-  }
+  _status = Status::kInitialized;
+
+  emitApplicationNotification(Client::Notification{
+      static_cast<int>(WorkerNotification::Type::kInitialized),
+      new WorkerNotification{id()}});
 
   return true;
 }
 
 void DetectorWorker::run() {
+  startAcquisition();
+
+  _status = Status::kRunning;
+
   emitApplicationNotification(
       Client::Notification{static_cast<int>(WorkerNotification::Type::kRunning),
-                           new WorkerNotification{}});
-
+                           new WorkerNotification{id()}});
   // event loop
   while (!_exitRequested) {
     Event ev;
@@ -95,12 +120,16 @@ void DetectorWorker::run() {
 
 void DetectorWorker::done() {
   emitApplicationNotification(Client::Notification{
-      static_cast<int>(WorkerNotification::Type::kTerminating),
-      new WorkerNotification{}});
+      static_cast<int>(WorkerNotification::Type::kShuttingDown),
+      new WorkerNotification{id()}});
 
   Worker::done();
 
   _recordStream.terminate();
+
+  emitApplicationNotification(Client::Notification{
+      static_cast<int>(WorkerNotification::Type::kShutdown),
+      new WorkerNotification{id()}});
 }
 
 DetectorWorker::EventHandler::EventHandler(DetectorWorker* worker)
@@ -118,8 +147,8 @@ void DetectorWorker::EventHandler::operator()(Detector::Event&& ev) {
   // http://www.diva-portal.org/smash/get/diva2:1349831/FULLTEXT01.pdf
   //
   // - requires the user to configure the max concurrent processor state
-  // machines which defines the threshold when the *congestion window* needs to
-  // be adjusted.
+  // machines which defines the threshold when the *congestion window* needs
+  // to be adjusted.
   // - it still needs to be clarified which strategy should be applied (e.g.
   // AIMD)
   // - the initial congestion window value must depend on the template
@@ -141,6 +170,11 @@ void DetectorWorker::DetectorEventHandler::operator()(
       std::move(ev));
 }
 
+void DetectorWorker::DetectorEventHandler::operator()(
+    detector::event::Status&& ev) {
+  worker->handleStatus(ev);
+}
+
 DetectorWorker::InternalEventHandler::InternalEventHandler(
     DetectorWorker* worker)
     : worker{worker} {}
@@ -148,6 +182,10 @@ DetectorWorker::InternalEventHandler::InternalEventHandler(
 void DetectorWorker::InternalEventHandler::operator()(
     detector::event::Record&& ev) {
   worker->dispatch(std::move(ev));
+  /* if (worker->closed() && */
+  /*     worker->_dispatchedRecords == worker->_storedRecords) { */
+  /*   worker->closeDetectors(); */
+  /* } */
 }
 
 void DetectorWorker::handle(Event&& ev) {
@@ -176,14 +214,53 @@ void DetectorWorker::initDetector(Detector& detector) {
   });
 }
 
+void DetectorWorker::closeDetectors() {
+  for (auto& detector : _detectors) {
+    detector->close();
+  }
+}
+
 void DetectorWorker::handleCommand(const event::Command& ev) {
+  using CommandType = event::Command::Type;
   switch (ev.type()) {
-    case event::Command::Type::kShutdown:
+    case CommandType::kClose: {
+      close();
+      break;
+    }
+    case CommandType::kShutdown: {
+      flush();
       shutdown();
       break;
+    }
     default:
       SCDETECT_LOG_WARNING("unhandled command type: %d",
                            static_cast<int>(ev.type()));
+  }
+}
+
+void DetectorWorker::handleStatus(const detector::event::Status& ev) {
+  using DetectorStatusType = detector::event::Status::Type;
+  switch (ev.type) {
+    case DetectorStatusType::kFinishedProcessing: {
+      auto allDetectorsFinishedProcessing{
+          std::all_of(std::begin(_detectors), std::end(_detectors),
+                      [](const Detectors::value_type& detector) {
+                        return detector->finished();
+                      })};
+
+      if (allDetectorsFinishedProcessing) {
+        emitApplicationNotification(Client::Notification{
+            static_cast<int>(WorkerNotification::Type::kFinishedProcessing),
+            new WorkerNotification{id()}});
+
+        _status = Status::kFinished;
+      }
+      break;
+    }
+    default:
+      SCDETECT_LOG_WARNING("unhandled status type: %d",
+                           static_cast<int>(ev.type));
+      break;
   }
 }
 
@@ -220,10 +297,15 @@ bool DetectorWorker::storeRecord(std::unique_ptr<Record> record) {
   return true;
 }
 
+void DetectorWorker::startAcquisition() {
+  _recordStream.open();
+  _recordStream.start();
+}
+
 void DetectorWorker::onAquisitionFinished() {
   emitApplicationNotification(Client::Notification{
-      static_cast<int>(WorkerNotification::Type::kFinished),
-      new WorkerNotification{}});
+      static_cast<int>(WorkerNotification::Type::kFinishedRecordStreaming),
+      new WorkerNotification{id()}});
 }
 
 void DetectorWorker::sleep_or_yield() {

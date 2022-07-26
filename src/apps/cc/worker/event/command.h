@@ -8,7 +8,7 @@ namespace event {
 
 class Command {
  public:
-  enum class Type { kShutdown };
+  enum class Type { kClose, kShutdown };
 
   explicit Command(Type type = Type::kShutdown);
 

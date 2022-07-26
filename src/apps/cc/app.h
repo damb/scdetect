@@ -29,6 +29,7 @@
 #include "util/waveform_stream_id.h"
 #include "waveform.h"
 #include "worker/detector_worker.h"
+#include "worker/event/command.h"
 
 namespace Seiscomp {
 namespace detect {
@@ -189,9 +190,12 @@ class Application : public Client::StreamApplication {
   using WorkerId = std::string;
   using WaveformStreamId = std::string;
   using DetectorWorker = worker::DetectorWorker;
-  using DetectorWorkers = std::vector<std::shared_ptr<DetectorWorker>>;
-  using DetectorWorkerIdx = std::unordered_map<WorkerId, std::size_t>;
+  using DetectorWorkers =
+      std::unordered_map<DetectorWorker::Id, std::shared_ptr<DetectorWorker>>;
+  using DetectorWorkerThreads =
+      std::unordered_map<DetectorWorker::Id, std::thread>;
   using Detector = DetectorWorker::Detector;
+  using WorkerCommand = worker::event::Command;
 
   struct DetectionItem {
     explicit DetectionItem(const DataModel::OriginPtr &origin)
@@ -294,6 +298,9 @@ class Application : public Client::StreamApplication {
   bool startDetectorWorkerThreads();
   void shutdownDetectorWorkers();
 
+  void flushDetectorWorker(const DetectorWorker::Id &workerId);
+  void shutdownDetectorWorker(const DetectorWorker::Id &workerId);
+
   Config _config;
   binding::Bindings _bindings;
 
@@ -303,9 +310,7 @@ class Application : public Client::StreamApplication {
   DataModel::EventParametersPtr _ep;
 
   DetectorWorkers _detectorWorkers;
-  DetectorWorkerIdx _detectorWorkerIdx;
-
-  std::vector<std::thread> _detectorWorkerThreads;
+  DetectorWorkerThreads _detectorWorkerThreads;
 };
 
 }  // namespace detect
