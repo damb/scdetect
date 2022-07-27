@@ -10,6 +10,7 @@ set(
     config/validators.cpp
     datamodel/ddl.cpp
     detail/sqlite.cpp
+    detection.cpp
     detector/arrival.cpp
     detector/detector.cpp
     detector/exception.cpp

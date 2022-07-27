@@ -17,6 +17,8 @@ DEFINE_SMARTPOINTER(Detection);
 // Detection worker notification
 class Detection : public WorkerNotification {
  public:
+  using WorkerNotification::WorkerNotification;
+
   std::string detectorId;
 
   std::unique_ptr<detector::Detection> detection;

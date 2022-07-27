@@ -51,8 +51,12 @@
 #include "eventstore.h"
 #include "log.h"
 #include "notification.h"
+#include "notification/detection.h"
 #include "processing/processor.h"
 #include "resamplerstore.h"
+#include "seiscomp/datamodel/arrival.h"
+#include "seiscomp/datamodel/creationinfo.h"
+#include "seiscomp/datamodel/pick.h"
 #include "util/memory.h"
 #include "util/util.h"
 #include "util/waveform_stream_id.h"
@@ -63,6 +67,75 @@
 
 namespace Seiscomp {
 namespace detect {
+
+namespace {
+
+DataModel::PickPtr createPick(const detector::Arrival &arrival,
+                              bool asTemplateArrivalPick,
+                              const boost::optional<DataModel::CreationInfo>
+                                  &creationInfo = boost::none) {
+  DataModel::PickPtr ret{DataModel::Pick::Create()};
+  if (!ret) {
+    throw Application::DuplicatePublicObjectId{"duplicate pick identifier"};
+  }
+
+  ret->setTime(DataModel::TimeQuantity{arrival.pick.time, boost::none,
+                                       arrival.pick.lowerUncertainty,
+                                       arrival.pick.upperUncertainty});
+  util::WaveformStreamID waveformStreamId{arrival.pick.waveformStreamId};
+  if (asTemplateArrivalPick) {
+    ret->setWaveformID(DataModel::WaveformStreamID{
+        waveformStreamId.netCode(), waveformStreamId.staCode(),
+        waveformStreamId.locCode(), waveformStreamId.chaCode(), ""});
+  } else {
+    ret->setWaveformID(DataModel::WaveformStreamID{
+        waveformStreamId.netCode(), waveformStreamId.staCode(),
+        waveformStreamId.locCode(),
+        util::getBandAndSourceCode(waveformStreamId), ""});
+  }
+  ret->setEvaluationMode(DataModel::EvaluationMode(DataModel::AUTOMATIC));
+
+  if (arrival.pick.phaseHint) {
+    ret->setPhaseHint(DataModel::Phase{*arrival.pick.phaseHint});
+  }
+
+  ret->setCreationInfo(creationInfo);
+
+  return ret;
+};
+
+DataModel::ArrivalPtr createArrival(
+    const detector::Arrival &arrival, const DataModel::Pick &pick,
+    const boost::optional<DataModel::CreationInfo> &creationInfo =
+        boost::none) {
+  auto ret{util::make_smart<DataModel::Arrival>()};
+  if (!ret) {
+    throw Application::DuplicatePublicObjectId{"duplicate arrival identifier"};
+  }
+  ret->setCreationInfo(creationInfo);
+  ret->setPickID(pick.publicID());
+  ret->setPhase(arrival.phase);
+  if (arrival.weight.value_or(0) != 0) {
+    ret->setWeight(arrival.weight);
+  }
+
+  return ret;
+}
+
+DataModel::CommentPtr createTemplateWaveformTimeInfoComment(
+    const detector::Detection::ContributionInfo &contributionInfo) {
+  auto ret{util::make_smart<DataModel::Comment>()};
+  ret->setId(settings::kTemplateWaveformTimeInfoPickCommentId);
+  ret->setText(contributionInfo.templateWaveformStartTime.iso() +
+               settings::kTemplateWaveformTimeInfoPickCommentIdSep +
+               contributionInfo.templateWaveformEndTime.iso() +
+               settings::kTemplateWaveformTimeInfoPickCommentIdSep +
+               contributionInfo.templateWaveformReferenceTime.iso());
+
+  return ret;
+}
+
+}  // namespace
 
 Application::Application(int argc, char **argv)
     : StreamApplication(argc, argv) {
@@ -525,8 +598,22 @@ bool Application::dispatchNotification(int type, Core::BaseObject *obj) {
 
     return true;
   }
-  // dispatch detection
-  // TODO TODO TODO
+
+  using DetectionNotification = notification::Detection;
+  using DetectionNotificationCPtr = notification::DetectionCPtr;
+  DetectionNotificationCPtr detectionNotification{
+      static_cast<DetectionNotification *>(obj)};
+
+  assert(detectionNotification->detection);
+  const auto &detectorId{detectionNotification->detectorId};
+  const auto &detection{detectionNotification->detection};
+
+  SCDETECT_LOG_DEBUG_TAGGED(
+      detectorId, "Processing detection (time=%s, associated_results=%d) ...",
+      detection->origin.time.iso().c_str(),
+      detection->contributionInfos.size());
+
+  processDetection(*detectionNotification);
 
   return true;
 }
@@ -764,19 +851,226 @@ void Application::shutdownDetectorWorker(const DetectorWorker::Id &workerId) {
   }
 }
 
-/* std::unique_ptr<DataModel::Comment> */
-/* Application::createTemplateWaveformTimeInfoComment( */
-/*     const detector::Detector::Detection::TemplateResult &templateResult) { */
-/*   auto ret{util::make_unique<DataModel::Comment>()}; */
-/*   ret->setId(settings::kTemplateWaveformTimeInfoPickCommentId); */
-/*   ret->setText(templateResult.templateWaveformStartTime.iso() + */
-/*                settings::kTemplateWaveformTimeInfoPickCommentIdSep + */
-/*                templateResult.templateWaveformEndTime.iso() + */
-/*                settings::kTemplateWaveformTimeInfoPickCommentIdSep + */
-/*                templateResult.templateWaveformReferenceTime.iso()); */
+void Application::processDetection(
+    const notification::Detection &detectionNotification) {
+  Detection prepared;
+  if (!prepareDetection(detectionNotification, prepared)) {
+    SCDETECT_LOG_WARNING_TAGGED(detectionNotification.detectorId,
+                                "Failed to prepare detection");
+    return;
+  }
+  publishDetection(prepared);
+}
 
-/*   return ret; */
-/* } */
+bool Application::prepareDetection(
+    const notification::Detection &detectionNotification,
+    Detection &detection) {
+  const auto &d{detectionNotification.detection};
+  const auto &detectorId{detectionNotification.detectorId};
+  assert(d);
+
+  Core::Time now{Core::Time::GMT()};
+
+  DataModel::CreationInfo ci;
+  ci.setAgencyID(agencyID());
+  ci.setAuthor(author());
+  ci.setCreationTime(now);
+
+  DataModel::OriginPtr origin{DataModel::Origin::Create()};
+  if (!origin) {
+    SCDETECT_LOG_WARNING_TAGGED(detectorId,
+                                "Internal error: duplicate origin identifier");
+    return false;
+  }
+
+  {
+    auto comment{util::make_smart<DataModel::Comment>()};
+    comment->setId(settings::kDetectorIdCommentId);
+    comment->setText(detectorId);
+    origin->add(comment.get());
+  }
+  {
+    auto comment{util::make_smart<DataModel::Comment>()};
+    comment->setId("scdetectResultCCC");
+    comment->setText(std::to_string(d->score));
+    origin->add(comment.get());
+  }
+
+  origin->setCreationInfo(ci);
+  origin->setLatitude(DataModel::RealQuantity(d->origin.latitude));
+  origin->setLongitude(DataModel::RealQuantity(d->origin.longitude));
+  if (d->origin.depth) {
+    origin->setDepth(DataModel::RealQuantity(*(d->origin.depth)));
+  }
+  origin->setTime(DataModel::TimeQuantity(d->origin.time));
+  origin->setMethodID(d->publishConfig.originMethodId);
+  origin->setEpicenterFixed(true);
+  origin->setEvaluationMode(DataModel::EvaluationMode(DataModel::AUTOMATIC));
+
+  std::vector<double> azimuths;
+  std::vector<double> distances;
+  for (const auto &resultPair : d->contributionInfos) {
+    double az, baz, dist;
+    const auto &sensorLocation{resultPair.second.sensorLocation};
+    Math::Geo::delazi(d->origin.latitude, d->origin.longitude,
+                      sensorLocation.latitude, sensorLocation.longitude, &dist,
+                      &az, &baz);
+
+    distances.push_back(dist);
+    azimuths.push_back(az);
+  }
+
+  std::sort(azimuths.begin(), azimuths.end());
+  std::sort(distances.begin(), distances.end());
+
+  DataModel::OriginQuality originQuality;
+  if (azimuths.size() > 2) {
+    double azGap{};
+    for (size_t i = 0; i < azimuths.size() - 1; ++i)
+      azGap = (azimuths[i + 1] - azimuths[i]) > azGap
+                  ? (azimuths[i + 1] - azimuths[i])
+                  : azGap;
+
+    originQuality.setAzimuthalGap(azGap);
+  }
+
+  if (!distances.empty()) {
+    originQuality.setMinimumDistance(distances.front());
+    originQuality.setMaximumDistance(distances.back());
+    originQuality.setMedianDistance(distances[distances.size() / 2]);
+  }
+
+  originQuality.setStandardError(1.0 - d->score);
+  originQuality.setAssociatedStationCount(d->numStationsAssociated);
+  originQuality.setUsedStationCount(d->numStationsUsed);
+  originQuality.setAssociatedPhaseCount(d->numChannelsAssociated);
+  originQuality.setUsedPhaseCount(d->numChannelsUsed);
+
+  origin->setQuality(originQuality);
+
+  detection.origin = origin;
+  detection.detectorId = detectorId;
+
+  auto createPicks{d->publishConfig.createArrivals};
+  if (createPicks) {
+    using PhaseCode = std::string;
+    using ProcessedPhaseCodes = std::unordered_set<PhaseCode>;
+    using SensorLocationStreamId = std::string;
+    using SensorLocationStreamIdProcessedPhaseCodesMap =
+        std::unordered_map<SensorLocationStreamId, ProcessedPhaseCodes>;
+    SensorLocationStreamIdProcessedPhaseCodesMap processedPhaseCodes;
+
+    for (const auto &contributionInfoPair : d->contributionInfos) {
+      const auto &contributionInfo{contributionInfoPair.second};
+
+      auto sensorLocationStreamId{
+          util::getSensorLocationStreamId(util::WaveformStreamID{
+              contributionInfo.arrival.pick.waveformStreamId})};
+
+      try {
+        const auto pick{createPick(contributionInfo.arrival, false, ci)};
+        if (!pick->add(createTemplateWaveformTimeInfoComment(contributionInfo)
+                           .get())) {
+          SCDETECT_LOG_WARNING_TAGGED(detectorId,
+                                      "Internal error: failed to add "
+                                      "template waveform time info comment");
+        }
+
+        auto &processed{processedPhaseCodes[sensorLocationStreamId]};
+        auto phaseAlreadyProcessed{
+            std::find(std::begin(processed), std::end(processed),
+                      contributionInfo.arrival.phase) != std::end(processed)};
+        // XXX(damb): assign a phase only once per sensor location
+        if (!phaseAlreadyProcessed) {
+          const auto arrival{
+              createArrival(contributionInfo.arrival, *pick, ci)};
+          detection.arrivalPicks.push_back({arrival, pick});
+          processed.emplace(contributionInfo.arrival.phase);
+        }
+      } catch (DuplicatePublicObjectId &e) {
+        SCDETECT_LOG_WARNING_TAGGED(detectorId, "Internal error: %s", e.what());
+        continue;
+      }
+    }
+  }
+
+  auto createTheoreticalTemplateArrivals{
+      d->publishConfig.createTemplateArrivals};
+  if (createTheoreticalTemplateArrivals) {
+    for (const auto &a : d->publishConfig.theoreticalTemplateArrivals) {
+      try {
+        const auto pick{createPick(a, true)};
+        const auto arrival{createArrival(a, *pick, ci)};
+        detection.arrivalPicks.push_back({arrival, pick});
+      } catch (DuplicatePublicObjectId &e) {
+        SCDETECT_LOG_WARNING_TAGGED(detectionNotification.detectorId,
+                                    "Internal error: %s", e.what());
+        continue;
+      }
+    }
+  }
+
+  return true;
+}
+
+void Application::publishDetection(const Detection &detection) {
+  logObject(_outputOrigins, Core::Time::GMT());
+
+  if (connection() && !_config.noPublish) {
+    SCDETECT_LOG_DEBUG_TAGGED(detection.detectorId,
+                              "Sending event parameters (detection) ...");
+
+    auto notifierMsg{util::make_smart<DataModel::NotifierMessage>()};
+
+    // origin
+    auto notifier{util::make_smart<DataModel::Notifier>(
+        "EventParameters", DataModel::OP_ADD, detection.origin.get())};
+    notifierMsg->attach(notifier.get());
+
+    // comments
+    for (std::size_t i{0}; i < detection.origin->commentCount(); ++i) {
+      auto notifier{util::make_smart<DataModel::Notifier>(
+          detection.origin->publicID(), DataModel::OP_ADD,
+          detection.origin->comment(i))};
+
+      notifierMsg->attach(notifier.get());
+    }
+
+    for (auto &arrivalPick : detection.arrivalPicks) {
+      // pick
+      {
+        auto notifier{util::make_smart<DataModel::Notifier>(
+            "EventParameters", DataModel::OP_ADD, arrivalPick.pick.get())};
+
+        notifierMsg->attach(notifier.get());
+      }
+      // arrival
+      {
+        auto notifier{util::make_smart<DataModel::Notifier>(
+            detection.origin->publicID(), DataModel::OP_ADD,
+            arrivalPick.arrival.get())};
+
+        notifierMsg->attach(notifier.get());
+      }
+    }
+
+    if (!connection()->send(notifierMsg.get())) {
+      SCDETECT_LOG_ERROR_TAGGED(
+          detection.detectorId,
+          "Sending of event parameters (detection) failed.");
+    }
+  }
+
+  if (_ep) {
+    _ep->add(detection.origin.get());
+
+    for (auto &arrivalPick : detection.arrivalPicks) {
+      detection.origin->add(arrivalPick.arrival.get());
+
+      _ep->add(arrivalPick.pick.get());
+    }
+  }
+}
 
 Application::Config::Config() {
   Environment *env{Environment::Instance()};

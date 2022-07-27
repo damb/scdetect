@@ -8,6 +8,7 @@
 #include <thread>
 
 #include "../notification.h"
+#include "../notification/detection.h"
 #include "../util/waveform_stream_id.h"
 #include "event/command.h"
 
@@ -253,7 +254,7 @@ void DetectorWorker::handleCommand(const event::Command& ev) {
       break;
     }
     default:
-      SCDETECT_LOG_WARNING("unhandled command type: %d",
+      SCDETECT_LOG_WARNING("Unknown command type: %d",
                            static_cast<int>(ev.type()));
   }
 }
@@ -303,10 +304,11 @@ void DetectorWorker::storeDetectorEvent(Detector::Event&& ev) {
 
 void DetectorWorker::storeDetection(
     const Detector* detector, std::unique_ptr<Detector::Detection> detection) {
-  // TODO TODO TODO
-  // - attach detection to Application Notification
+  auto* payload{new notification::Detection{id()}};
+  payload->detectorId = detector->id();
+  payload->detection = std::move(detection);
   emitApplicationNotification(Client::Notification{
-      static_cast<int>(WorkerNotification::Type::kDetection)});
+      static_cast<int>(WorkerNotification::Type::kDetection), payload});
 }
 
 bool DetectorWorker::storeRecord(std::unique_ptr<Record> record) {
@@ -340,7 +342,10 @@ void DetectorWorker::emitApplicationNotification(
     const Client::Notification& notification) {
   if (_emitApplicationNotificationCallback) {
     _emitApplicationNotificationCallback(notification);
+    return;
   }
+  // XXX(damb): this should never happen
+  delete notification.object;
 }
 
 }  // namespace worker

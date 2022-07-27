@@ -3,12 +3,9 @@
 
 #include <seiscomp/client/streamapplication.h>
 #include <seiscomp/core/baseobject.h>
-#include <seiscomp/datamodel/amplitude.h>
 #include <seiscomp/datamodel/eventparameters.h>
-#include <seiscomp/datamodel/magnitude.h>
 #include <seiscomp/datamodel/origin.h>
 #include <seiscomp/datamodel/pick.h>
-#include <seiscomp/datamodel/stationmagnitude.h>
 
 #include <boost/optional/optional.hpp>
 #include <cassert>
@@ -23,8 +20,10 @@
 #include "binding.h"
 #include "config/detector.h"
 //#include "config/template_family.h"
+#include "detection.h"
 #include "detector/detector.h"
 #include "exception.h"
+#include "notification/detection.h"
 #include "settings.h"
 #include "util/waveform_stream_id.h"
 #include "waveform.h"
@@ -201,87 +200,6 @@ class Application : public Client::StreamApplication {
   using Detector = DetectorWorker::Detector;
   using WorkerCommand = worker::event::Command;
 
-  struct DetectionItem {
-    explicit DetectionItem(const DataModel::OriginPtr &origin)
-        : origin{origin} {
-      assert(origin);
-    }
-
-    Core::Time expired{Core::Time::GMT() +
-                       Core::TimeSpan{10 * 60.0 /*seconds*/}};
-
-    struct ProcessorConfig {
-      bool gapInterpolation;
-      Core::TimeSpan gapThreshold;
-      Core::TimeSpan gapTolerance;
-    };
-
-    ProcessorConfig config;
-
-    using ProcessorId = std::string;
-    using Amplitudes = std::unordered_map<ProcessorId, DataModel::AmplitudePtr>;
-    Amplitudes amplitudes;
-    using Magnitudes = std::vector<DataModel::StationMagnitudePtr>;
-    Magnitudes magnitudes;
-    using NetworkMagnitudes = std::vector<DataModel::MagnitudePtr>;
-    NetworkMagnitudes networkMagnitudes;
-
-    struct ArrivalPick {
-      DataModel::ArrivalPtr arrival;
-      DataModel::PickPtr pick;
-    };
-    using ArrivalPicks = std::vector<ArrivalPick>;
-    // Picks and arrivals which are associated to the detection (i.e. both
-    // detected picks and *template picks*)
-    ArrivalPicks arrivalPicks;
-
-    using WaveformStreamId = std::string;
-    struct Pick {
-      // The authorative full waveform stream identifier
-      WaveformStreamId authorativeWaveformStreamId;
-      DataModel::PickCPtr pick;
-    };
-    using AmplitudePickMap = std::unordered_map<ProcessorId, Pick>;
-    // Picks used for amplitude calculation
-    AmplitudePickMap amplitudePickMap;
-
-    DataModel::OriginPtr origin;
-
-    std::string detectorId;
-    // std::shared_ptr<const detector::Detector::Detection> detection;
-
-    std::size_t numberOfRequiredAmplitudes{};
-    std::size_t numberOfRequiredMagnitudes{};
-
-    bool published{false};
-
-    const std::string &id() const { return origin->publicID(); }
-
-    bool amplitudesReady() const {
-      std::size_t count{};
-      for (const auto &amplitudePair : amplitudes) {
-        if (amplitudePair.second) {
-          ++count;
-        }
-      }
-      return numberOfRequiredAmplitudes == count;
-    }
-    bool magnitudesReady() const {
-      return numberOfRequiredMagnitudes == magnitudes.size();
-    }
-    bool ready() const {
-      return (amplitudesReady() && magnitudesReady()) ||
-             (Core::Time::GMT() >= expired);
-    }
-
-    friend bool operator==(const DetectionItem &lhs, const DetectionItem &rhs) {
-      return lhs.id() == rhs.id();
-    }
-    friend bool operator!=(const DetectionItem &lhs, const DetectionItem &rhs) {
-      return !(lhs == rhs);
-    }
-  };
-
   bool isEventDatabaseEnabled() const;
 
   // Load events either from `eventDb` or `db`
@@ -304,6 +222,11 @@ class Application : public Client::StreamApplication {
 
   void flushDetectorWorker(const DetectorWorker::Id &workerId);
   void shutdownDetectorWorker(const DetectorWorker::Id &workerId);
+
+  void processDetection(const notification::Detection &detectionNotification);
+  bool prepareDetection(const notification::Detection &detectionNotification,
+                        Detection &detection);
+  void publishDetection(const Detection &detection);
 
   Config _config;
   binding::Bindings _bindings;
