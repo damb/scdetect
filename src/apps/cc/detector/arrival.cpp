@@ -15,7 +15,8 @@ bool operator==(const Pick &lhs, const Pick &rhs) {
 bool operator!=(const Pick &lhs, const Pick &rhs) { return !(lhs == rhs); }
 
 /* ------------------------------------------------------------------------- */
-Arrival::Arrival(const Pick &pick, const std::string &phase, double weight)
+Arrival::Arrival(const Pick &pick, const std::string &phase,
+                 boost::optional<double> weight)
     : pick{pick}, phase{phase}, weight{weight} {}
 
 bool operator==(const Arrival &lhs, const Arrival &rhs) {

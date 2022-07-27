@@ -3,7 +3,7 @@
 
 #include <seiscomp/core/datetime.h>
 
-#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 #include <functional>
 #include <string>
 
@@ -35,14 +35,15 @@ struct Pick {
 
 // A detector arrival
 struct Arrival {
-  Arrival(const Pick &pick, const std::string &phase, double weight = 0);
+  Arrival(const Pick &pick, const std::string &phase,
+          boost::optional<double> weight = boost::none);
 
   // The associated pick
   Pick pick;
   // The associated phase code
   std::string phase;
   // The arrival weight
-  double weight{0};
+  boost::optional<double> weight;
 
   friend bool operator==(const Arrival &lhs, const Arrival &rhs);
   friend bool operator!=(const Arrival &lhs, const Arrival &rhs);

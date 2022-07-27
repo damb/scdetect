@@ -29,7 +29,9 @@ inline std::size_t hash<Seiscomp::detect::detector::Arrival>::operator()(
   boost::hash_combine(ret,
                       std::hash<Seiscomp::detect::detector::Pick>{}(a.pick));
   boost::hash_combine(ret, std::hash<std::string>{}(a.phase));
-  boost::hash_combine(ret, std::hash<double>{}(a.weight));
+  if (a.weight) {
+    boost::hash_combine(ret, std::hash<double>{}(*a.weight));
+  }
   return ret;
 }
 
