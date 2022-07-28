@@ -24,7 +24,10 @@ namespace detect {
 namespace worker {
 
 // An event-driven detector worker implementation which implements an
-// event-loop.
+// event-loop
+//
+// - most of the member functions aren't thread-safe; post corresponding
+// `event::Command`s in order to communicate with the worker
 class DetectorWorker : public Worker {
  public:
   using Detector = detector::Detector;
@@ -36,8 +39,18 @@ class DetectorWorker : public Worker {
 
   enum class Status {
     kInitialized,
+    // Indicating whether the worker is running
     kRunning,
+    // Indicating whether the worker is paused (i.e. whether the worker
+    // temporarily stops retrieving new tasks out of its queue).  Any tasks
+    // already executed will keep running until they are finished.
+    kPaused,
+    // Indicating whether the worker is closed. If closed, it doesn't accept
+    // new `event::Record`s, anymore.
+    kClosed,
+    // Indicating whether the worker was terminated
     kTerminated,
+    // Indicating whether the worker finished gracefully
     kFinished,
   };
 
@@ -52,11 +65,18 @@ class DetectorWorker : public Worker {
   static ThreadId threadId();
 
   // Returns the worker's status
+  //
+  // - thead-safe
   Status status() const;
 
   // Pauses the worker
+  //
+  // - if unpausing the worker the next status will be `Status::kRunning`
+  // - thead-safe
   void pause(bool enable);
   // Returns whether the worker is currently paused
+  //
+  // - thread-safe
   bool paused() const;
 
   // Flushes the worker
@@ -65,8 +85,11 @@ class DetectorWorker : public Worker {
   //
   // - after closing the worker won't accept new waveform data (i.e.
   // `event::Record`s) anymore
+  // - thread-safe
   void close();
   // Returns whether the worker is closed
+  //
+  // - thead-safe
   bool closed() const;
   // Terminates the worker
   void terminate();
@@ -190,19 +213,11 @@ class DetectorWorker : public Worker {
   // stored in the input event queue
   std::atomic<std::size_t> _recordCongestionWindow{10};
 
-  Status _status{Status::kInitialized};
+  // An atomic variable referring to the current status of the worker
+  std::atomic<Status> _status{Status::kInitialized};
 
-  // An atomic variable indicating whether the worker should pause. When set to
-  // `true`, the worker temporarily stops retrieving new tasks out of its queue,
-  // although any tasks already executed will keep running until they are
-  // finished. Set to `false` again to resume retrieving tasks.
-  std::atomic<bool> _paused{false};
-  // An atomic variable indicating whether the worker is closed. If closed, it
-  // doesn't accept new record events, anymore.
-  std::atomic<bool> _closed{false};
-  // An atomic variable indicating to the worker to keep running. When set to
-  // `true`, the worker permanently stops working.
-  std::atomic<bool> _exitRequested{false};
+  // Indicates whether to stop running (`true`) or not (`false`)
+  bool _exitRequested{false};
 };
 
 }  // namespace worker

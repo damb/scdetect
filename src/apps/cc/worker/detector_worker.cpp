@@ -11,6 +11,7 @@
 #include "../notification/detection.h"
 #include "../util/waveform_stream_id.h"
 #include "event/command.h"
+#include "exception.h"
 
 namespace Seiscomp {
 namespace detect {
@@ -32,9 +33,18 @@ DetectorWorker::ThreadId DetectorWorker::threadId() {
 
 DetectorWorker::Status DetectorWorker::status() const { return _status; }
 
-void DetectorWorker::pause(bool enable) { _paused = enable; }
+void DetectorWorker::pause(bool enable) {
+  if (enable) {
+    if (_status != Status::kRunning) {
+      throw worker::BaseException{"worker not running"};
+    }
+    _status = Status::kPaused;
+  } else {
+    _status = Status::kRunning;
+  }
+}
 
-bool DetectorWorker::paused() const { return _paused; }
+bool DetectorWorker::paused() const { return _status == Status::kPaused; }
 
 void DetectorWorker::flush() {
   for (auto& detector : _detectors) {
@@ -43,11 +53,15 @@ void DetectorWorker::flush() {
 }
 
 void DetectorWorker::close() {
-  _closed = true;
+  if (_status != Status::kRunning) {
+    throw worker::BaseException{"worker not running"};
+  }
+
+  _status = Status::kClosed;
   closeDetectors();
 }
 
-bool DetectorWorker::closed() const { return _closed; }
+bool DetectorWorker::closed() const { return _status == Status::kClosed; }
 
 void DetectorWorker::terminate() {
   _recordStream.terminate();
@@ -138,7 +152,7 @@ void DetectorWorker::run() {
   // event loop
   while (!_exitRequested) {
     Event ev;
-    if (!_paused &&
+    if (!paused() &&
         _eventQueue.get(ev, std::chrono::microseconds(*_sleep_duration))) {
       handle(std::move(ev));
     } else {
