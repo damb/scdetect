@@ -3,6 +3,7 @@
 
 #include <seiscomp/core/datetime.h>
 
+#include <boost/functional/hash.hpp>
 #include <boost/optional/optional.hpp>
 #include <functional>
 #include <string>
@@ -58,17 +59,39 @@ namespace std {
 template <>
 struct hash<Seiscomp::detect::detector::Pick> {
   std::size_t operator()(
-      const Seiscomp::detect::detector::Pick &p) const noexcept;
+      const Seiscomp::detect::detector::Pick &p) const noexcept {
+    std::size_t ret{0};
+    boost::hash_combine(ret, std::hash<std::string>{}(p.time.iso()));
+    boost::hash_combine(ret, std::hash<std::string>{}(p.waveformStreamId));
+    if (p.phaseHint) {
+      boost::hash_combine(ret, std::hash<std::string>{}(*p.phaseHint));
+    }
+    boost::hash_combine(ret, std::hash<double>{}(p.offset.length()));
+    if (p.lowerUncertainty) {
+      boost::hash_combine(ret, std::hash<double>{}(*p.lowerUncertainty));
+    }
+    if (p.upperUncertainty) {
+      boost::hash_combine(ret, std::hash<double>{}(*p.upperUncertainty));
+    }
+    return ret;
+  }
 };
 
 template <>
 struct hash<Seiscomp::detect::detector::Arrival> {
   std::size_t operator()(
-      const Seiscomp::detect::detector::Arrival &a) const noexcept;
+      const Seiscomp::detect::detector::Arrival &a) const noexcept {
+    std::size_t ret{0};
+    boost::hash_combine(ret,
+                        std::hash<Seiscomp::detect::detector::Pick>{}(a.pick));
+    boost::hash_combine(ret, std::hash<std::string>{}(a.phase));
+    if (a.weight) {
+      boost::hash_combine(ret, std::hash<double>{}(*a.weight));
+    }
+    return ret;
+  }
 };
 
 }  // namespace std
-
-#include "arrival.ipp"
 
 #endif  // SCDETECT_APPS_CC_DETECTOR_ARRIVAL_H_
