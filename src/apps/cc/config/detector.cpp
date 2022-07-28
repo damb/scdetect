@@ -107,6 +107,7 @@ bool DetectorConfig::isValid(size_t numStreamConfigs) const {
       (!gapInterpolation ||
        (gapInterpolation && util::isGeZero(gapThreshold) &&
         util::isGeZero(gapTolerance) && gapThreshold < gapTolerance)) &&
+      util::isGeZero(bufferSize) &&
       validateArrivalOffsetThreshold(arrivalOffsetThreshold) &&
       validateMinArrivals(minArrivals, static_cast<int>(numStreamConfigs)) &&
       validateLinkerMergingStrategy(mergingStrategy));
@@ -146,6 +147,8 @@ TemplateConfig::TemplateConfig(const boost::property_tree::ptree &pt,
       pt.get<double>("gapTolerance", detectorDefaults.gapTolerance);
   _detectorConfig.maximumLatency =
       pt.get<double>("maximumLatency", detectorDefaults.maximumLatency);
+  _detectorConfig.bufferSize =
+      pt.get<double>("bufferSize", detectorDefaults.bufferSize);
   _detectorConfig.arrivalOffsetThreshold = pt.get<double>(
       "arrivalOffsetThreshold", detectorDefaults.arrivalOffsetThreshold);
   _detectorConfig.minArrivals =

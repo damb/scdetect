@@ -86,6 +86,11 @@ struct DetectorConfig {
   double gapTolerance{4.5};
   // Maximum data latency in seconds tolerated with regards to `NOW`
   double maximumLatency{10};
+  // Template processor waveform buffer size in seconds. Waveform data is
+  // processed once the buffer is full (i.e. the length of the time window
+  // regarding the buffered data is larger than the configured waveform buffer
+  // size)
+  double bufferSize{0.0};
 
   // Maximum inter arrival offset threshold in seconds to tolerate when
   // associating an arrival to an event

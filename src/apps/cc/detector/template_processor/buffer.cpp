@@ -8,8 +8,7 @@ namespace detect {
 namespace detector {
 namespace template_processor {
 
-Buffer::Buffer(const Core::TimeSpan& bufferSize)
-    : _bufferSize{std::abs(bufferSize)} {}
+Buffer::Buffer(const Core::TimeSpan& bufferSize) : _bufferSize{bufferSize} {}
 
 bool Buffer::empty() const noexcept { return _buffer.empty(); }
 
@@ -22,7 +21,7 @@ const Core::TimeSpan& Buffer::configuredBufferSize() const {
 }
 
 void Buffer::setConfiguredBufferSize(const Core::TimeSpan& duration) {
-  _bufferSize = std::abs(duration);
+  _bufferSize = duration;
 }
 
 bool Buffer::feed(const Core::TimeWindow& tw, DoubleArrayPtr& data) {

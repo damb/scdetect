@@ -262,6 +262,10 @@ void Detector::Builder::finalize() {
     procConfig.processor.setGapInterpolation(
         product()->_config.gapInterpolation);
 
+    // configure template processor buffer size
+    procConfig.processor.setConfiguredBufferSize(
+        Core::TimeSpan{product()->_config.bufferSize});
+
     const auto &meta{procConfig.metadata};
     boost::optional<std::string> phase_hint;
     try {

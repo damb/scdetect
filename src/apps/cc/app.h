@@ -24,6 +24,7 @@
 #include "detector/detector.h"
 #include "exception.h"
 #include "notification/detection.h"
+#include "seiscomp/core/datetime.h"
 #include "settings.h"
 #include "util/waveform_stream_id.h"
 #include "waveform.h"
@@ -75,9 +76,8 @@ class Application : public Client::StreamApplication {
     // detector configuration level granularity.
     boost::optional<bool> magnitudesForceMode;
 
-    // Flag with forces the waveform buffer size
-    boost::optional<Core::TimeSpan> forcedWaveformBufferSize{
-        Core::TimeSpan{300.0}};
+    // Defines the template processor buffer size
+    boost::optional<Core::TimeSpan> forcedTemplateProcessorBufferSize;
 
     // Defines if a detector should be initialized although template
     // processors could not be initialized due to missing waveform data.

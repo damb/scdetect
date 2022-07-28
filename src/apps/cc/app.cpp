@@ -299,11 +299,11 @@ bool Application::validateParameters() {
     return false;
   }
 
-  if (_config.forcedWaveformBufferSize &&
-      !util::isGeZero(*_config.forcedWaveformBufferSize)) {
+  if (_config.forcedTemplateProcessorBufferSize &&
+      !util::isGeZero(*_config.forcedTemplateProcessorBufferSize)) {
     SCDETECT_LOG_ERROR(
-        "Invalid configuration: 'waveformBufferSize': %f. Must be >= 0.",
-        _config.streamConfig.initTime);
+        "Invalid configuration: 'bufferSize': %f. Must be >= 0.",
+        static_cast<double>(*_config.forcedTemplateProcessorBufferSize));
     return false;
   }
 
@@ -686,6 +686,12 @@ bool Application::loadEvents(const std::string &eventDb,
 
 bool Application::initDetectorWorkers(std::ifstream &ifs,
                                       WaveformHandlerIface *waveformHandler) {
+  // enforce template processor buffer size
+  if (_config.forcedTemplateProcessorBufferSize) {
+    _config.detectorConfig.bufferSize =
+        static_cast<double>(*_config.forcedTemplateProcessorBufferSize);
+  }
+
   std::vector<std::unique_ptr<Detector>> detectors;
   try {
     detectors = createDetectors(ifs, waveformHandler);
@@ -1144,8 +1150,8 @@ void Application::Config::init(const Client::Application *app) {
   }
 
   try {
-    forcedWaveformBufferSize =
-        Core::TimeSpan{app->configGetDouble("processing.waveformBufferSize")};
+    forcedTemplateProcessorBufferSize =
+        Core::TimeSpan{app->configGetDouble("processing.bufferSize")};
   } catch (...) {
   }
 
