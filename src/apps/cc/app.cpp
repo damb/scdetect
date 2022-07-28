@@ -702,6 +702,15 @@ bool Application::initDetectorWorkers(std::ifstream &ifs,
   // TODO(damb): perform load balancing; currently all detectors are handled
   // by a single `DetectorWorker`
   worker::RecordStream recordStream{recordStreamURL()};
+  // configure the record stream
+  if (!_config.playbackConfig.startTimeStr.empty()) {
+    recordStream.setStartTime(_config.playbackConfig.startTime);
+    _config.playbackConfig.enabled = true;
+  }
+  if (!_config.playbackConfig.endTimeStr.empty()) {
+    recordStream.setEndTime(_config.playbackConfig.endTime);
+    _config.playbackConfig.enabled = true;
+  }
   auto worker{std::make_shared<DetectorWorker>(std::move(recordStream),
                                                std::move(detectors))};
   worker->setId(util::createUUID());
